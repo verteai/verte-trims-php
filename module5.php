@@ -133,6 +133,8 @@ function buildPivot($from, $to, $supplier, $brand, $io) {
 // ═══════════════════════════════════════════
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'get_suppliers') {
     header('Content-Type: application/json');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('Pragma: no-cache');
     $rows = dbQuery("SELECT DISTINCT Vendor_Name FROM TRIMS_TBL_RAWDATA ORDER BY Vendor_Name", array());
     if (isset($rows['__error'])) { echo json_encode(array('error' => $rows['__error'])); exit; }
     $list = array();
@@ -146,6 +148,8 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'get_suppliers') {
 // ═══════════════════════════════════════════
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'get_brands') {
     header('Content-Type: application/json');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('Pragma: no-cache');
     $rows = dbQuery(
         "SELECT id, description FROM TRIMS_TBL_DROPDOWN WHERE category = 3 ORDER BY description",
         array()
@@ -162,6 +166,8 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'get_brands') {
 // ═══════════════════════════════════════════
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'load_summary') {
     header('Content-Type: application/json');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('Pragma: no-cache');
     $from     = isset($_GET['from'])     ? trim($_GET['from'])     : '';
     $to       = isset($_GET['to'])       ? trim($_GET['to'])       : '';
     $supplier = isset($_GET['supplier']) ? trim($_GET['supplier']) : '';
@@ -589,8 +595,11 @@ var defectCols = [];
 // Load suppliers and brands on init
 (function() {
     function loadDropdown(url, selId) {
+        var sep = url.indexOf('?') !== -1 ? '&' : '?';
         var xhr = new XMLHttpRequest();
-        xhr.open('GET', url, true);
+        xhr.open('GET', url + sep + '_=' + Date.now(), true);
+        xhr.setRequestHeader('Cache-Control', 'no-cache, no-store');
+        xhr.setRequestHeader('Pragma', 'no-cache');
         xhr.onreadystatechange = function() {
             if (xhr.readyState === 4) {
                 try {
@@ -639,10 +648,13 @@ function loadSummary() {
               '&from='     + encodeURIComponent(f.from)     +
               '&to='       + encodeURIComponent(f.to)       +
               '&supplier=' + encodeURIComponent(f.supplier) +
-              '&brand='    + encodeURIComponent(f.brand);
+              '&brand='    + encodeURIComponent(f.brand)    +
+              '&_='        + Date.now();
 
     var xhr = new XMLHttpRequest();
     xhr.open('GET', url, true);
+    xhr.setRequestHeader('Cache-Control', 'no-cache, no-store');
+    xhr.setRequestHeader('Pragma', 'no-cache');
     xhr.onreadystatechange = function() {
         if (xhr.readyState !== 4) { return; }
         var data;
