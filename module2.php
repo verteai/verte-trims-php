@@ -1,6 +1,6 @@
 <?php
 // ─────────────────────────────────────────────
-//  Module 2 – Dashboard (aggregates Module 1, 3, 5)
+//  Module 2 – Dashboard 
 // ─────────────────────────────────────────────
 if (!function_exists('trims_dash_where')) {
     function trims_dash_where($from, $to, $supplier, $brand, $io, &$params) {
@@ -1468,6 +1468,10 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_pro_summaries') {
         getEl('dashTo').value = todayStr();
         loadDropdowns();
         getEl('dashRefreshBtn').onclick = refreshDashboard;
+        getEl('dashFrom').onchange     = refreshDashboard;
+        getEl('dashTo').onchange       = refreshDashboard;
+        getEl('dashSupplier').onchange = refreshDashboard;
+        getEl('dashBrand').onchange    = refreshDashboard;
         getEl('dashIoInput').onkeydown = function(ev) {
             if (ev.keyCode === 13) { refreshDashboard(); }
         };
