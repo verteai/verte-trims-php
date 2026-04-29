@@ -25,6 +25,8 @@ if (!function_exists('trims_dash_where')) {
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_inspection_rows') {
     require_once dirname(__FILE__) . '/config.php';
     header('Content-Type: application/json');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('Pragma: no-cache');
     $from     = isset($_GET['from'])     ? trim($_GET['from'])     : '';
     $to       = isset($_GET['to'])       ? trim($_GET['to'])       : '';
     $supplier = isset($_GET['supplier']) ? trim($_GET['supplier']) : '';
@@ -61,6 +63,8 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_inspection_rows') {
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_pro_summaries') {
     require_once dirname(__FILE__) . '/config.php';
     header('Content-Type: application/json');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('Pragma: no-cache');
     $from     = isset($_GET['from'])     ? trim($_GET['from'])     : '';
     $to       = isset($_GET['to'])       ? trim($_GET['to'])       : '';
     $supplier = isset($_GET['supplier']) ? trim($_GET['supplier']) : '';
@@ -801,8 +805,11 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_pro_summaries') {
     function getEl(id) { return document.getElementById(id); }
 
     function xhrGet(url, cb) {
+        var sep = url.indexOf('?') !== -1 ? '&' : '?';
         var x = new XMLHttpRequest();
-        x.open('GET', url, true);
+        x.open('GET', url + sep + '_=' + Date.now(), true);
+        x.setRequestHeader('Cache-Control', 'no-cache, no-store');
+        x.setRequestHeader('Pragma', 'no-cache');
         x.onreadystatechange = function() {
             if (x.readyState !== 4) { return; }
             try {

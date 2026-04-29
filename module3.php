@@ -57,6 +57,8 @@ function reportSqlAndParams($from, $to, $supplier, $brand, $io) {
 // ═══════════════════════════════════════════════════════════════════════════
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'load_report') {
     header('Content-Type: application/json');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('Pragma: no-cache');
     $from     = isset($_GET['from'])     ? trim($_GET['from'])     : '';
     $to       = isset($_GET['to'])       ? trim($_GET['to'])       : '';
     $supplier = isset($_GET['supplier']) ? trim($_GET['supplier']) : '';
@@ -436,8 +438,11 @@ function esc(v) {
 }
 
 function ajax3(url, cb) {
+    var sep = url.indexOf('?') !== -1 ? '&' : '?';
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', url, true);
+    xhr.open('GET', url + sep + '_=' + Date.now(), true);
+    xhr.setRequestHeader('Cache-Control', 'no-cache, no-store');
+    xhr.setRequestHeader('Pragma', 'no-cache');
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4) {
             try   { cb(null, JSON.parse(xhr.responseText)); }
