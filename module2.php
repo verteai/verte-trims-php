@@ -736,13 +736,8 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_pro_summaries') {
     </div>
 
     <div class="card dash-lines-panel">
-        <div class="card-title">Inspection lines</div>
-        <div class="dash-grid-2" style="margin-bottom:0;">
-            <div class="dash-chart-card dash-ac-results" style="margin:0 16px 16px;">
-                <div class="hd">Result mix (filtered)</div>
-                <div class="dash-chart-inner"><div class="dash-chart-box" style="height:220px;"><canvas id="chartIoResults"></canvas></div></div>
-            </div>
-            <div class="dash-chart-card dash-ac-volume" style="margin:0 16px 16px;">
+        <div style="margin:0 16px 16px;">
+            <div class="dash-chart-card dash-ac-volume">
                 <div class="hd">Inspection</div>
                 <div class="dash-mini-table-wrap">
                     <table class="dash-mini-table" id="dashIoTable">
@@ -780,7 +775,6 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_pro_summaries') {
     var chartByDate  = null;
     var chartTrimPct = null;
     var chartDefects = null;
-    var chartIoResults = null;
 
     var M3_ROWS = [];
     var M5_DATA = { rows: [], defect_cols: [] };
@@ -1283,7 +1277,6 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_pro_summaries') {
     }
 
     function renderSpotlight(rows) {
-        destroyChart(chartIoResults);
         var tbody = getEl('dashIoTbody');
 
         if (!rows || rows.error) {
@@ -1295,39 +1288,6 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_pro_summaries') {
             tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#999;">No data</td></tr>';
             return;
         }
-
-        var p = 0, f = 0, h = 0, r = 0;
-        for (var i = 0; i < rows.length; i++) {
-            var res = (rows[i].Result || '').toString().toUpperCase();
-            if (res === 'PASSED') { p++; }
-            else if (res === 'FAILED') { f++; }
-            else if (res === 'HOLD') { h++; }
-            else if (res === 'REPLACEMENT') { r++; }
-        }
-        var ctx = document.getElementById('chartIoResults').getContext('2d');
-        chartIoResults = new Chart(ctx, {
-            type: 'pie',
-            data: {
-                labels: ['Passed', 'Failed', 'Hold', 'Replacement'],
-                datasets: [{
-                    data: [p, f, h, r],
-                    backgroundColor: ['#1b5e20', '#b71c1c', '#ff8f00', '#1a237e'],
-                    borderWidth: 4,
-                    borderColor: '#fff',
-                    hoverOffset: 8
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: { boxWidth: 14, padding: 10, font: { size: 11, weight: '700' }, color: '#263238' }
-                    }
-                }
-            }
-        });
 
         var html = '';
         for (var j = 0; j < rows.length; j++) {
@@ -1376,7 +1336,6 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_pro_summaries') {
         getEl('dashProTrimFoot').innerHTML = '';
         getEl('dashProSupFoot').innerHTML = '';
         getEl('dashProQaBody').innerHTML = '<tr><td colspan="7" class="dash-pro-num" style="padding:16px;color:#78909c;">Loading…</td></tr>';
-        destroyChart(chartIoResults);
 
         var f = {
             supplier: getEl('dashSupplier').value,
