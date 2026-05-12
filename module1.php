@@ -5,6 +5,11 @@
 // ─────────────────────────────────────────────
 require_once dirname(__FILE__) . '/config.php';
 
+// AJAX hits this script directly so the session cookie must be loaded here too.
+if (session_id() == '') {
+    session_start();
+}
+
 if (isset($_GET['ajax'])) {
     header('Content-Type: application/json');
     $action = isset($_GET['ajax']) ? $_GET['ajax'] : '';
@@ -14,10 +19,27 @@ if (isset($_GET['ajax'])) {
         if ($io === '') { echo json_encode(array('error' => 'IO Number required')); exit; }
         $rows = dbQuery("SELECT TOP 1 IO_Num, Customer_Name FROM TRIMS_TBL_RAWDATA WHERE IO_Num = ?", array($io));
         if (isset($rows['__error'])) { echo json_encode(array('error' => $rows['__error'])); exit; }
-        if (empty($rows))            { echo json_encode(array('error' => 'IO Number not found')); exit; }
+
+        $fromInspectionOnly = false;
+        if (empty($rows)) {
+            $rows = dbQuery(
+                "SELECT TOP 1 IO_num AS IO_Num, Custome_Name AS Customer_Name
+                 FROM TRIMS_TBL_INSPECTION WHERE IO_num = ? ORDER BY id",
+                array($io)
+            );
+            if (isset($rows['__error'])) { echo json_encode(array('error' => $rows['__error'])); exit; }
+            if (empty($rows)) {
+                echo json_encode(array('error' => 'IO Number not found'));
+                exit;
+            }
+            $fromInspectionOnly = true;
+        }
 
         $poRows = dbQuery(
-            "SELECT DISTINCT PO_Num FROM TRIMS_TBL_RAWDATA WHERE IO_Num = ? AND PO_Num IS NOT NULL AND LTRIM(RTRIM(PO_Num)) <> '' ORDER BY PO_Num",
+            $fromInspectionOnly
+                ? "SELECT DISTINCT PO_num AS PO_Num FROM TRIMS_TBL_INSPECTION
+                   WHERE IO_num = ? AND PO_num IS NOT NULL AND LTRIM(RTRIM(PO_num)) <> '' ORDER BY PO_Num"
+                : "SELECT DISTINCT PO_Num FROM TRIMS_TBL_RAWDATA WHERE IO_Num = ? AND PO_Num IS NOT NULL AND LTRIM(RTRIM(PO_Num)) <> '' ORDER BY PO_Num",
             array($io)
         );
         if (isset($poRows['__error'])) { echo json_encode(array('error' => $poRows['__error'])); exit; }
@@ -27,6 +49,9 @@ if (isset($_GET['ajax'])) {
             $poNums[] = $poRows[$i]['PO_Num'];
         }
         $rows[0]['PO_Nums'] = $poNums;
+        if ($fromInspectionOnly) {
+            $rows[0]['From_Inspection_Only'] = true;
+        }
 
         echo json_encode(array('success' => true, 'io' => $rows[0]));
         exit;
@@ -35,11 +60,29 @@ if (isset($_GET['ajax'])) {
     if ($action === 'get_suppliers') {
         $io = isset($_GET['io']) ? trim($_GET['io']) : '';
         $rows = dbQuery(
-            "SELECT DISTINCT Vendor_Name, GMC_Description, Addl_Description, PO_Qty, Customer_Name, PO_Num
-             FROM TRIMS_TBL_RAWDATA WHERE IO_Num = ? ORDER BY Vendor_Name, PO_Num, GMC_Description",
+            "SELECT DISTINCT Vendor_Name, GMC_Description, Addl_Description, PO_Qty, Customer_Name, PO_Num, GR_Num,
+                    Vessel, Voyage, Container_Num, HBL
+             FROM TRIMS_TBL_RAWDATA WHERE IO_Num = ?
+             ORDER BY Vendor_Name, PO_Num, GMC_Description, GR_Num, Vessel, Voyage, Container_Num, HBL",
             array($io)
         );
         if (isset($rows['__error'])) { echo json_encode(array('error' => $rows['__error'])); exit; }
+
+        // No raw ERP lines for this IO: rebuild supplier pick-list from saved inspections so rows stay editable.
+        if (empty($rows)) {
+            $rows = dbQuery(
+                "SELECT Vendor_Name, GMC_Description, Addl_Description,
+                        MAX(Total_Qty) AS PO_Qty, MAX(Custome_Name) AS Customer_Name,
+                        PO_Num, GR_Num, Vessel, Voyage, Container_Num, HBL
+                 FROM TRIMS_TBL_INSPECTION
+                 WHERE IO_num = ?
+                 GROUP BY Vendor_Name, GMC_Description, Addl_Description, PO_Num,
+                          GR_Num, Vessel, Voyage, Container_Num, HBL
+                 ORDER BY Vendor_Name, PO_Num, GMC_Description, GR_Num, Vessel, Voyage, Container_Num, HBL",
+                array($io)
+            );
+            if (isset($rows['__error'])) { echo json_encode(array('error' => $rows['__error'])); exit; }
+        }
         echo json_encode($rows); exit;
     }
 
@@ -76,7 +119,7 @@ if (isset($_GET['ajax'])) {
     if ($action === 'get_rows') {
         $io = isset($_GET['io']) ? trim($_GET['io']) : '';
         $rows = dbQuery(
-            "SELECT id, Vendor_Name, IO_num, PO_num, GMC_Description, Addl_Description,
+            "SELECT id, Vendor_Name, IO_num, PO_num, GR_Num, Vessel, Voyage, Container_Num, HBL, GMC_Description, Addl_Description,
                     Custome_Name, Defect_Type, System_Trim_Type, Month, Week, Inspection_Date,
                     Total_Qty, Qty_Inspected, Qty_Defects, Result
              FROM TRIMS_TBL_INSPECTION WHERE IO_num = ? ORDER BY id",
@@ -117,20 +160,34 @@ if (isset($_GET['ajax'])) {
         $qtyInspected = (int)$data['Qty_Inspected'];
         $result       = $data['Result'];
         $rowId        = isset($data['row_id']) ? (int)$data['row_id'] : 0;
+        $grNum        = isset($data['GR_Num'])         ? $data['GR_Num']         : '';
+        $vessel       = isset($data['Vessel'])          ? $data['Vessel']          : '';
+        $voyage       = isset($data['Voyage'])          ? $data['Voyage']          : '';
+        $containerNum = isset($data['Container_Num'])  ? $data['Container_Num']   : '';
+        $hbl            = isset($data['HBL'])           ? $data['HBL']             : '';
+
+        $username = isset($_SESSION['username']) ? trim($_SESSION['username']) : '';
+        if ($username === '') {
+            echo json_encode(array('error' => 'Not logged in'));
+            exit;
+        }
 
         if ($rowId > 0) {
             $ok = dbExec(
                 "UPDATE TRIMS_TBL_INSPECTION
-                 SET PO_num=?, Vendor_Name=?, GMC_Description=?, Addl_Description=?,
+                 SET PO_num=?, GR_Num=?, Vessel=?, Voyage=?, Container_Num=?, HBL=?, Vendor_Name=?, GMC_Description=?, Addl_Description=?,
                      Custome_Name=?, Defect_Type=?, System_Trim_Type=?,
                      Month=?, Week=?, Inspection_Date=?,
-                     Total_Qty=?, Qty_Inspected=?, Qty_Defects=?, Result=?
+                     Total_Qty=?, Qty_Inspected=?, Qty_Defects=?, Result=?,
+                     Updated_by=?, Updated_Date=GETDATE()
                  WHERE id=?",
                 array(
-                    $data['PO_num'], $data['Vendor_Name'], $data['GMC_Description'], $data['Addl_Description'],
+                    $data['PO_num'], $grNum, $vessel, $voyage, $containerNum, $hbl,
+                    $data['Vendor_Name'], $data['GMC_Description'], $data['Addl_Description'],
                     $data['Custome_Name'], $data['Defect_Type'], $data['System_Trim_Type'],
                     $data['Month'], $data['Week'], $data['Inspection_Date'],
-                    (int)$data['Total_Qty'], $qtyInspected, $qtyDef, $result, $rowId
+                    (int)$data['Total_Qty'], $qtyInspected, $qtyDef, $result,
+                    $username, $rowId
                 )
             );
             if ($ok === false) { echo json_encode(array('error' => 'Update failed')); exit; }
@@ -138,9 +195,10 @@ if (isset($_GET['ajax'])) {
         } else {
             $chk = dbQuery(
                 "SELECT id FROM TRIMS_TBL_INSPECTION
-                 WHERE IO_num=? AND PO_num=? AND Vendor_Name=? AND GMC_Description=? AND Addl_Description=? AND Defect_Type=?",
+                 WHERE IO_num=? AND PO_num=? AND Vendor_Name=? AND GMC_Description=? AND Addl_Description=? AND Defect_Type=?
+                       AND ISNULL(GR_Num,'')=? AND ISNULL(Vessel,'')=? AND ISNULL(Voyage,'')=? AND ISNULL(Container_Num,'')=? AND ISNULL(HBL,'')=?",
                 array($data['IO_num'], $data['PO_num'], $data['Vendor_Name'], $data['GMC_Description'],
-                      $data['Addl_Description'], $data['Defect_Type'])
+                      $data['Addl_Description'], $data['Defect_Type'], $grNum, $vessel, $voyage, $containerNum, $hbl)
             );
             if (isset($chk['__error'])) { echo json_encode(array('error' => $chk['__error'])); exit; }
 
@@ -148,14 +206,17 @@ if (isset($_GET['ajax'])) {
                 $existingId = $chk[0]['id'];
                 $ok = dbExec(
                     "UPDATE TRIMS_TBL_INSPECTION
-                     SET PO_num=?, Custome_Name=?, Defect_Type=?, System_Trim_Type=?,
+                     SET PO_num=?, GR_Num=?, Vessel=?, Voyage=?, Container_Num=?, HBL=?, Custome_Name=?, Defect_Type=?, System_Trim_Type=?,
                          Month=?, Week=?, Inspection_Date=?,
-                         Total_Qty=?, Qty_Inspected=?, Qty_Defects=?, Result=?
+                         Total_Qty=?, Qty_Inspected=?, Qty_Defects=?, Result=?,
+                         Updated_by=?, Updated_Date=GETDATE()
                      WHERE id=?",
                     array(
-                        $data['PO_num'], $data['Custome_Name'], $data['Defect_Type'], $data['System_Trim_Type'],
+                        $data['PO_num'], $grNum, $vessel, $voyage, $containerNum, $hbl,
+                        $data['Custome_Name'], $data['Defect_Type'], $data['System_Trim_Type'],
                         $data['Month'], $data['Week'], $data['Inspection_Date'],
-                        (int)$data['Total_Qty'], $qtyInspected, $qtyDef, $result, $existingId
+                        (int)$data['Total_Qty'], $qtyInspected, $qtyDef, $result,
+                        $username, $existingId
                     )
                 );
                 if ($ok === false) { echo json_encode(array('error' => 'Update failed')); exit; }
@@ -163,15 +224,17 @@ if (isset($_GET['ajax'])) {
             } else {
                 $ok = dbExec(
                     "INSERT INTO TRIMS_TBL_INSPECTION
-                     (IO_num, PO_num, Vendor_Name, GMC_Description, Addl_Description,
+                     (IO_num, PO_num, GR_Num, Vessel, Voyage, Container_Num, HBL, Vendor_Name, GMC_Description, Addl_Description,
                       Custome_Name, Defect_Type, System_Trim_Type, Month, Week, Inspection_Date,
-                      Total_Qty, Qty_Inspected, Qty_Defects, Result)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                      Total_Qty, Qty_Inspected, Qty_Defects, Result, Inspected_by, Inspected_Date)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,GETDATE())",
                     array(
-                        $data['IO_num'], $data['PO_num'], $data['Vendor_Name'], $data['GMC_Description'],
-                        $data['Addl_Description'], $data['Custome_Name'], $data['Defect_Type'],
-                        $data['System_Trim_Type'], $data['Month'], $data['Week'], $data['Inspection_Date'],
-                        (int)$data['Total_Qty'], $qtyInspected, $qtyDef, $result
+                        $data['IO_num'], $data['PO_num'], $grNum, $vessel, $voyage, $containerNum, $hbl,
+                        $data['Vendor_Name'], $data['GMC_Description'], $data['Addl_Description'],
+                        $data['Custome_Name'], $data['Defect_Type'], $data['System_Trim_Type'],
+                        $data['Month'], $data['Week'], $data['Inspection_Date'],
+                        (int)$data['Total_Qty'], $qtyInspected, $qtyDef, $result,
+                        $username
                     )
                 );
                 if ($ok === false) { echo json_encode(array('error' => 'Insert failed')); exit; }
@@ -197,10 +260,24 @@ if (isset($_GET['ajax'])) {
 ?>
 <style>
     input[type=date] { width:100%; padding:7px 9px; border:1px solid #c8d0da; border-radius:5px; font-size:.85rem; background:#fff; }
-    .tbl-wrap table  { min-width:1700px; }
+    .tbl-wrap table  { min-width:2320px; }
     #inspectionTable tbody td { vertical-align:middle; }
 
     select.result-sel { width:100%; padding:5px 4px; border:1px solid #c8d0da; border-radius:4px; font-size:.82rem; }
+
+    /* ── Mobile responsive ── */
+    @media (max-width: 768px){
+        .search-row .sf,
+        .search-row .sb {
+            float:none;
+            width:100%;
+            margin-right:0;
+            margin-bottom:10px;
+            padding-top:0;
+        }
+        .search-row .sb .btn { width:100%; }
+        .tbl-wrap { -webkit-overflow-scrolling: touch; }
+    }
 </style>
 
 <!-- Search Card -->
@@ -236,6 +313,11 @@ if (isset($_GET['ajax'])) {
                     <th style="width:32px;">#</th>
                     <th style="min-width:200px;">SUPPLIER / TRIM</th>
                     <th style="min-width:120px;">PO NO.</th>
+                    <th style="min-width:120px;">GR NO.</th>
+                    <th style="min-width:120px;">VESSEL</th>
+                    <th style="min-width:100px;">VOYAGE</th>
+                    <th style="min-width:110px;">CONTAINER #</th>
+                    <th style="min-width:110px;">HBL</th>
                     <th style="min-width:120px;">BRAND</th>
                     <th style="min-width:140px;">TRIM TYPE</th>
                     <th style="min-width:130px;">SYSTEM TRIM</th>
@@ -430,12 +512,40 @@ function ajax(method, url, body, callback) {
     xhr.open(method, url, true);
     if (body) { xhr.setRequestHeader('Content-Type', 'application/json'); }
     xhr.onreadystatechange = function() {
-        if (xhr.readyState === 4) {
-            try   { callback(null, JSON.parse(xhr.responseText)); }
-            catch (e) { callback('Parse error: ' + xhr.responseText, null); }
+        if (xhr.readyState !== 4) { return; }
+        if (xhr.status < 200 || xhr.status >= 300) {
+            callback('HTTP ' + xhr.status, null);
+            return;
+        }
+        var txt = xhr.responseText || '';
+        try {
+            callback(null, JSON.parse(txt));
+        } catch (e) {
+            callback('Parse error (not JSON): ' + txt.substring(0, 200), null);
         }
     };
     xhr.send(body ? JSON.stringify(body) : null);
+}
+
+/** Expect JSON array; PHP sends {"error":"..."} on failure — treat as empty list + note message */
+function ajaxDataAsArray(label, err, data, issues) {
+    if (err) {
+        if (issues) { issues.push(label + ': ' + err); }
+        return [];
+    }
+    if (data && data.error) {
+        if (issues) { issues.push(label + ': ' + data.error); }
+        return [];
+    }
+    if (!data || typeof data !== 'object') {
+        if (issues) { issues.push(label + ': invalid list response'); }
+        return [];
+    }
+    if (Object.prototype.toString.call(data) !== '[object Array]') {
+        if (issues) { issues.push(label + ': invalid list response'); }
+        return [];
+    }
+    return data;
 }
 
 // ── Search IO ──────────────────────────────────
@@ -458,29 +568,38 @@ function searchIO() {
             poNums = [data.io.PO_Num];
         }
         var poText = poNums.length ? poNums.join(', ') : '-';
+        var custName = (data.io && data.io.Customer_Name) ? data.io.Customer_Name : '-';
+        var inspOnly = data.io && data.io.From_Inspection_Only;
+        var inspNote = inspOnly
+            ? ' <span style="font-weight:600;">(No raw data for this IO &mdash; showing saved inspections.)</span>'
+            : '';
 
         infoEl.innerHTML =
             '<div class="alert alert-ok">Found &mdash; IO: <strong>' + io + '</strong>' +
             ' &nbsp;| PO: <strong>' + poText + '</strong>' +
-            ' &nbsp;| Customer: <strong>' + data.io.Customer_Name + '</strong></div>';
+            ' &nbsp;| Customer: <strong>' + custName + '</strong>' + inspNote + '</div>';
 
+        var loadIssues = [];
         ajax('GET', BASE + '?ajax=get_suppliers&io=' + encodeURIComponent(io), null, function(e2, d2) {
-            suppliers = (e2 || !d2) ? [] : d2;
+            suppliers = ajaxDataAsArray('Supplier lines', e2, d2, loadIssues);
         ajax('GET', BASE + '?ajax=get_brands', null, function(e3, d3) {
-            brands = (e3 || !d3) ? [] : d3;
+            brands = ajaxDataAsArray('Brands', e3, d3, loadIssues);
         ajax('GET', BASE + '?ajax=get_defects', null, function(e4, d4) {
-            defects = (e4 || !d4) ? [] : d4;
+            defects = ajaxDataAsArray('Defect types', e4, d4, loadIssues);
         ajax('GET', BASE + '?ajax=get_system_trims', null, function(e5, d5) {
-            systemTrims = (e5 || !d5) ? [] : d5;
+            systemTrims = ajaxDataAsArray('System trims', e5, d5, loadIssues);
         ajax('GET', BASE + '?ajax=get_months', null, function(e6, d6) {
-            months = (e6 || !d6) ? [] : d6;
+            months = ajaxDataAsArray('Months', e6, d6, loadIssues);
         ajax('GET', BASE + '?ajax=get_weeks', null, function(e7, d7) {
-            weeks = (e7 || !d7) ? [] : d7;
+            weeks = ajaxDataAsArray('Weeks', e7, d7, loadIssues);
         ajax('GET', BASE + '?ajax=get_rows&io=' + encodeURIComponent(io), null, function(e8, d8) {
-            var rows = (e8 || !d8) ? [] : d8;
+            var rows = ajaxDataAsArray('Saved rows', e8, d8, loadIssues);
             document.getElementById('inspectionBody').innerHTML = '';
             rowCounter = 0;
             document.getElementById('inspectionCard').style.display = 'block';
+            if (loadIssues.length) {
+                showStatus('Some data failed to load: ' + loadIssues.join(' · '), 'err');
+            }
             if (rows.length === 0) { addRow(null); }
             else { for (var i = 0; i < rows.length; i++) { addRow(rows[i]); } }
         });
@@ -500,7 +619,12 @@ function buildSupplierOptions(selIdx) {
         if (!isSupplierAvailableForRow(i, selIdx)) { continue; }
         var s = suppliers[i];
         var lbl = s.Vendor_Name + ' | ' + s.PO_Num + ' | ' + s.GMC_Description +
-                  (s.Addl_Description ? ' - ' + s.Addl_Description : '');
+                  (s.Addl_Description ? ' - ' + s.Addl_Description : '') +
+                  (s.GR_Num          ? ' | GR: ' + s.GR_Num : '') +
+                  (s.Vessel          ? ' | Ves: ' + s.Vessel : '') +
+                  (s.Voyage          ? ' | Voy: ' + s.Voyage : '') +
+                  (s.Container_Num   ? ' | Ctr: ' + s.Container_Num : '') +
+                  (s.HBL             ? ' | HBL: ' + s.HBL : '');
         var sel = (i === parseInt(selIdx, 10)) ? ' selected' : '';
         html += '<option value="' + i + '"' + sel + ' title="' + lbl.replace(/"/g,'&quot;') + '">' + lbl + '</option>';
     }
@@ -514,7 +638,12 @@ function getSupplierKey(supplier) {
         supplier.PO_Num || '',
         supplier.Vendor_Name || '',
         supplier.GMC_Description || '',
-        supplier.Addl_Description || ''
+        supplier.Addl_Description || '',
+        supplier.GR_Num || '',
+        supplier.Vessel || '',
+        supplier.Voyage || '',
+        supplier.Container_Num || '',
+        supplier.HBL || ''
     ].join('||');
 }
 
@@ -526,7 +655,8 @@ function getCurrentRowSupplierKey(rid) {
 }
 
 function isSupplierAvailableForRow(idx, selIdx) {
-    if (idx === parseInt(selIdx, 10)) { return true; }
+    var selNum = parseInt(selIdx, 10);
+    if (!isNaN(selNum) && idx === selNum) { return true; }
     var key = getSupplierKey(suppliers[idx]);
     if (!key) { return false; }
 
@@ -664,8 +794,24 @@ function addRow(saved) {
             if (suppliers[i].Vendor_Name     === saved.Vendor_Name &&
                 suppliers[i].PO_Num          === saved.PO_num &&
                 suppliers[i].GMC_Description  === saved.GMC_Description &&
-                suppliers[i].Addl_Description === saved.Addl_Description) {
+                suppliers[i].Addl_Description === saved.Addl_Description &&
+                (suppliers[i].GR_Num        || '') === (saved.GR_Num        || '') &&
+                (suppliers[i].Vessel || '') === (saved.Vessel || '') &&
+                (suppliers[i].Voyage || '') === (saved.Voyage || '') &&
+                (suppliers[i].Container_Num || '') === (saved.Container_Num || '') &&
+                (suppliers[i].HBL || '') === (saved.HBL || '')) {
                 supIdx = i; break;
+            }
+        }
+        // Fallback: ignore GR/Vessel/Container fields if no exact match (legacy or mismatched raw rows)
+        if (supIdx === '') {
+            for (var i = 0; i < suppliers.length; i++) {
+                if (suppliers[i].Vendor_Name     === saved.Vendor_Name &&
+                    suppliers[i].PO_Num          === saved.PO_num &&
+                    suppliers[i].GMC_Description  === saved.GMC_Description &&
+                    suppliers[i].Addl_Description === saved.Addl_Description) {
+                    supIdx = i; break;
+                }
             }
         }
     }
@@ -673,13 +819,31 @@ function addRow(saved) {
     var brandId    = (saved && saved.Custome_Name)     ? findBrandId(saved.Custome_Name)  : '';
     var sysTypeVal = (saved && saved.System_Trim_Type) ? saved.System_Trim_Type           : '';
     var defTypeVal = saved ? (saved.Defect_Type      || '') : '';
-    var dateVal    = saved ? (saved.Inspection_Date   || '') : '';
-    var monthVal   = saved ? (saved.Month             || '') : '';
-    var weekVal    = saved ? (saved.Week              || '') : '';
+    var dateVal, monthVal, weekVal;
+    if (saved) {
+        dateVal  = saved.Inspection_Date || '';
+        monthVal = saved.Month            || '';
+        weekVal  = saved.Week             || '';
+    } else {
+        // Default new rows to today's date, with Month/Week auto-matched
+        var _today = new Date();
+        var _yy = _today.getFullYear();
+        var _mm = _today.getMonth() + 1;
+        var _dd = _today.getDate();
+        dateVal  = _yy + '-' + (_mm < 10 ? '0' + _mm : _mm) + '-' + (_dd < 10 ? '0' + _dd : _dd);
+        monthVal = findMonthId(getMonthFromDate(dateVal));
+        var _wn  = getWeekFromDate(dateVal);
+        weekVal  = _wn > 0 ? findWeekId(_wn) : '';
+    }
     var totalQty   = saved ? (saved.Total_Qty         || 0)  : 0;
     var qtyInspVal = saved ? (saved.Qty_Inspected     || 0)  : 0;
     var qtyDefVal  = saved ? (saved.Qty_Defects       || 0)  : 0;
     var poNum      = saved ? (saved.PO_num            || '') : '';
+    var grNum      = saved ? (saved.GR_Num            || '') : '';
+    var vesselVal    = saved ? (saved.Vessel        || '') : '';
+    var voyageVal    = saved ? (saved.Voyage        || '') : '';
+    var containerVal = saved ? (saved.Container_Num || '') : '';
+    var hblVal       = saved ? (saved.HBL || '') : '';
     var dbId       = saved ? (saved.id                || '') : '';
     // Saved result (may be PASSED/FAILED/HOLD/REPLACEMENT)
     var savedResult = saved ? (saved.Result || '') : '';
@@ -693,6 +857,11 @@ function addRow(saved) {
         '<td style="font-weight:700;color:#1a3a5c;text-align:center;">' + rid + '</td>' +
         '<td><select id="sup-'     + rid + '">' + buildSupplierOptions(supIdx)       + '</select></td>' +
         '<td><input type="text" id="po-' + rid + '" readonly value="' + escapeHtml(poNum) + '"></td>' +
+        '<td><input type="text" id="gr-' + rid + '" readonly value="' + escapeHtml(grNum) + '"></td>' +
+        '<td><input type="text" id="vessel-' + rid + '" readonly value="' + escapeHtml(vesselVal) + '"></td>' +
+        '<td><input type="text" id="voyage-' + rid + '" readonly value="' + escapeHtml(voyageVal) + '"></td>' +
+        '<td><input type="text" id="container-' + rid + '" readonly value="' + escapeHtml(containerVal) + '"></td>' +
+        '<td><input type="text" id="hbl-' + rid + '" readonly value="' + escapeHtml(hblVal) + '"></td>' +
         '<td><select id="brand-'   + rid + '">' + buildBrandOptions(brandId)         + '</select></td>' +
         '<td><input type="text" id="trimtype-' + rid + '" readonly title=""></td>' +
         '<td><select id="systrim-' + rid + '">' + buildSystemTrimOptions(sysTypeVal) + '</select></td>' +
@@ -741,6 +910,11 @@ function onSupplierChange(rid) {
     var idx = parseInt(document.getElementById('sup-' + rid).value, 10);
     if (isNaN(idx) || !suppliers[idx]) {
         document.getElementById('po-'       + rid).value = '';
+        document.getElementById('gr-'       + rid).value = '';
+        document.getElementById('vessel-'   + rid).value = '';
+        document.getElementById('voyage-'   + rid).value = '';
+        document.getElementById('container-' + rid).value = '';
+        document.getElementById('hbl-' + rid).value = '';
         document.getElementById('trimtype-' + rid).value = '';
         document.getElementById('qty-'      + rid).value = '';
         document.getElementById('qtyins-'   + rid).value = '';
@@ -763,8 +937,13 @@ function fillTrimType(rid, idx, triggerSave) {
     trimEl.value = fullText;
     trimEl.title = fullText;
 
-    document.getElementById('po-' + rid).value = s.PO_Num;
-    document.getElementById('qty-' + rid).value = s.PO_Qty;
+    document.getElementById('po-' + rid).value     = s.PO_Num;
+    document.getElementById('gr-' + rid).value     = s.GR_Num        || '';
+    document.getElementById('vessel-' + rid).value    = s.Vessel || '';
+    document.getElementById('voyage-' + rid).value    = s.Voyage || '';
+    document.getElementById('container-' + rid).value = s.Container_Num || '';
+    document.getElementById('hbl-' + rid).value         = s.HBL || '';
+    document.getElementById('qty-' + rid).value    = s.PO_Qty;
     var tr = document.getElementById('row-' + rid);
     if (tr) { tr.setAttribute('data-po-num', s.PO_Num); }
 
@@ -857,6 +1036,11 @@ function saveRow(rid) {
         row_id          : dbId ? parseInt(dbId, 10) : 0,
         IO_num          : currentIO,
         PO_num          : s.PO_Num,
+        GR_Num          : s.GR_Num        || '',
+        Vessel          : s.Vessel || '',
+        Voyage          : s.Voyage || '',
+        Container_Num   : s.Container_Num || '',
+        HBL             : s.HBL || '',
         Vendor_Name     : s.Vendor_Name,
         GMC_Description : s.GMC_Description,
         Addl_Description: s.Addl_Description,

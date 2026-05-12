@@ -8,13 +8,14 @@ A web-based Quality Control and Inspection Management System built with PHP and 
 
 | Module | Name | Description |
 |--------|------|-------------|
-| 1 | **Encoding** | Record and submit inspection data — IO Number lookup, PO selection, trim defect entry, and result encoding |
+| 1 | **Inspection Module** | Record and submit inspection data — IO Number lookup (with fallback when only inspection rows exist), PO selection, supplier/trim lines including **GR number, vessel, voyage, container #, and HBL**, defect entry, and results (PASSED, FAILED, HOLD, REPLACEMENT) |
 | 2 | **Dashboard** | Aggregated visual overview of inspection results with date, supplier, and brand filters |
 | 3 | **Inspection Report** | Filterable inspection report with PDF export via TCPDF/FPDF |
 | 4 | **Raw Data Upload** | Bulk import of raw inspection data from Excel files into the database |
 | 5 | **Performance Summary / Brand** | Performance monitoring summary broken down by brand and trim type |
 | 6 | **Dropdown Menu** | Admin management of dropdown list values (categories, descriptions) |
 | 7 | **Week / Month** | Calendar-based configuration for inspection weeks and months |
+| — | **Analytics Chatbot** | In-app assistant (`chatbot.php`) — natural-language questions over `TRIMS_TBL_INSPECTION` (summaries, defect rates, top suppliers/brands/defects, pass/fail/hold/replacement, IO lookup with shipment columns aligned with the Inspection Module) |
 
 ---
 
@@ -33,17 +34,18 @@ A web-based Quality Control and Inspection Management System built with PHP and 
 ```
 /
 ├── index.php           # Login page
-├── main.php            # Main shell — sidebar navigation + module loader
+├── main.php            # Main shell — sidebar navigation, module loader, analytics chatbot UI
+├── chatbot.php         # JSON API for the analytics assistant (requires authenticated session)
 ├── config.php          # Database connection & helper functions
 ├── config - orig.php   # Original config template (for reference)
-├── module1.php         # Encoding module
+├── module1.php         # Inspection Module
 ├── module2.php         # Dashboard module
 ├── module3.php         # Inspection Report module
 ├── module4.php         # Raw Data Upload module
 ├── module5.php         # Performance Summary module
 ├── module6.php         # Dropdown Menu admin module
 ├── module7.php         # Week/Month calendar module
-├── module8.php         # (Secondary login / utility)
+├── sql/                # Optional SQL Server migration scripts (e.g. extra inspection columns)
 └── Library/
     ├── tcpdf.php       # TCPDF library (PDF generation)
     ├── fpdf/           # FPDF library
@@ -85,12 +87,16 @@ A web-based Quality Control and Inspection Management System built with PHP and 
 
 4. **Set up the database** — ensure the following tables exist in your SQL Server database:
    - `TRIMS_TBL_RAWDATA` — raw inspection data
-   - `TRIMS_TBL_INSPECTION` — encoded inspection records
+   - `TRIMS_TBL_INSPECTION` — encoded inspection records (including columns used by the Inspection Module / chatbot, such as `GR_Num` and — if you run the scripts below — `Vessel`, `Voyage`, `Container_Num`, `HBL`)
    - `TRIMS_TBL_DROPDOWN` — dropdown reference values
-   - `TRIMS_TBL_WEEK` — week/month calendar entries
+   - `TRIMS_TBL_WEEKMONTH` — week/month calendar entries (used by the Inspection Module, Module 3, and 7)
    - `user_management.dbo.TBL_USER_MANAGEMENT` — user accounts (separate database)
 
-5. **Open in browser:**
+5. **Optional: extend `TRIMS_TBL_INSPECTION`** — if your database predates the vessel/HBL fields, run the scripts in `sql/` (adjust schema/database names as needed):
+   - `sql/TRIMS_TBL_INSPECTION_add_vessel_columns.sql`
+   - `sql/TRIMS_TBL_INSPECTION_add_HBL.sql`
+
+6. **Open in browser:**
    ```
    http://localhost/Trims/
    ```
@@ -101,11 +107,12 @@ A web-based Quality Control and Inspection Management System built with PHP and 
 
 1. Log in with a valid username and password from `user_management.dbo.TBL_USER_MANAGEMENT`.
 2. Use the sidebar to navigate between modules.
-3. **Module 1 (Encoding):** Enter an IO Number, select a PO, fill in inspection details, and submit.
-4. **Module 4 (Raw Data Upload):** Upload an Excel file to bulk-import raw data records.
-5. **Module 2 (Dashboard):** Filter by date range, supplier, and brand to view inspection summaries.
-6. **Module 3 (Inspection Report):** Generate and download PDF inspection reports.
-7. **Modules 6 & 7:** Manage dropdown values and week/month calendar entries (admin use).
+3. **Inspection Module (Module 1):** Enter an IO Number, select a PO, capture shipment identifiers (GR, vessel, voyage, container, HBL) where applicable, fill in inspection details, and submit.
+4. **Analytics Chatbot:** Use the in-app assistant to ask about summaries, defect rates, failures, IO-specific history, recent inspections, and more (same shipment columns as the Inspection Module where lists apply).
+5. **Module 4 (Raw Data Upload):** Upload an Excel file to bulk-import raw data records.
+6. **Module 2 (Dashboard):** Filter by date range, supplier, and brand to view inspection summaries.
+7. **Module 3 (Inspection Report):** Generate and download PDF inspection reports.
+8. **Modules 6 & 7:** Manage dropdown values and week/month calendar entries (admin use).
 
 ---
 

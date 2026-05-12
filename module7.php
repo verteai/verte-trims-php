@@ -195,6 +195,61 @@ tbody tr:hover{background:#eef4ff;}
     color:#666;
     font-size:12px;
 }
+
+.tbl-scroll{
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+}
+.tbl-scroll table{ min-width:680px; }
+
+/* ── Form layout (responsive flex) ── */
+.form-row{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:flex-end;
+    gap:10px;
+}
+.form-row .field{
+    display:flex;
+    flex-direction:column;
+    flex:1 1 160px;
+    min-width:0;
+}
+.form-row .field > label{
+    font-size:12px;
+    font-weight:600;
+    color:#555;
+    margin-bottom:3px;
+}
+.form-row .field input[type=text],
+.form-row .field select{
+    width:100%;
+}
+.form-row .actions{
+    display:flex;
+    gap:6px;
+    flex:0 0 auto;
+}
+
+/* ── Mobile responsive ── */
+@media (max-width: 768px){
+    .card{ padding:12px; }
+    .table-top{
+        flex-direction:column;
+        align-items:stretch;
+        gap:8px;
+    }
+    .search-box{ width:100% !important; }
+
+    .form-row .actions{ flex:1 1 100%; }
+    .form-row .actions button{ flex:1; }
+
+    .pagination button{
+        margin:1px;
+        padding:6px 9px;
+        font-size:12px;
+    }
+}
 </style>
 </head>
 
@@ -206,22 +261,32 @@ tbody tr:hover{background:#eef4ff;}
 
     <input type="hidden" id="id">
 
-    Category
-    <select id="category">
-        <option value="">--</option>
-        <option>1</option><option>2</option>
-        <option>3</option><option>4</option>
-        <option>5</option>
-    </select>
+    <div class="form-row">
+        <div class="field">
+            <label>Category</label>
+            <select id="category">
+                <option value="">--</option>
+                <option>1</option><option>2</option>
+                <option>3</option><option>4</option>
+                <option>5</option>
+            </select>
+        </div>
 
-    Seq
-    <input type="text" id="seq" style="width:120px;">
+        <div class="field">
+            <label>Seq</label>
+            <input type="text" id="seq">
+        </div>
 
-    Description
-    <input type="text" id="description" style="width:260px;">
+        <div class="field" style="flex:2 1 220px;">
+            <label>Description</label>
+            <input type="text" id="description">
+        </div>
 
-    <button class="primary" onclick="save()">Save</button>
-    <button onclick="clearForm()">Clear</button>
+        <div class="actions">
+            <button class="primary" onclick="save()">Save</button>
+            <button onclick="clearForm()">Clear</button>
+        </div>
+    </div>
 </div>
 
 <!-- ================= GRID (SAME DESIGN AS MODULE6) ================= -->
@@ -244,6 +309,7 @@ tbody tr:hover{background:#eef4ff;}
         </div>
     </div>
 
+    <div class="tbl-scroll">
     <table>
         <thead>
         <tr>
@@ -256,6 +322,7 @@ tbody tr:hover{background:#eef4ff;}
         </thead>
         <tbody id="gridBody"></tbody>
     </table>
+    </div>
 
     <div class="pagination" id="pager"></div>
 </div>

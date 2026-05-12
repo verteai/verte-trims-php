@@ -593,6 +593,68 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_pro_summaries') {
     .dash-pro-table tbody tr.dash-tr-fail { background: #ffcdd2 !important; }
     .dash-pro-table tbody tr.dash-tr-hold { background: #fff9c4 !important; }
     .dash-pro-table tbody tr.dash-tr-repl { background: #e8eaf6 !important; }
+
+    /* ── Mobile responsive ── */
+    @media (max-width: 768px) {
+        .dash-hero {
+            padding: 16px 16px;
+            border-radius: 10px;
+            margin-bottom: 16px;
+        }
+        .dash-hero h3 { font-size: 1.05rem; }
+        .dash-hero p  { font-size: .78rem; margin-bottom: 14px; }
+
+        .dash-filters { gap: 10px; }
+        .dash-filters .fg { width: 100%; }
+        .dash-filters .fg input[type=date],
+        .dash-filters .fg select,
+        .dash-io-filter {
+            min-width: 0 !important;
+            width: 100%;
+        }
+        .dash-actions {
+            margin-left: 0;
+            width: 100%;
+        }
+        .dash-btn-refresh { width: 100%; }
+
+        .dash-kpi-grid {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .dash-kpi { padding: 14px 14px; }
+        .dash-kpi .lbl { font-size: .68rem; }
+        .dash-kpi .val { font-size: 1.4rem; }
+
+        .dash-grid-2,
+        .dash-pro-grid {
+            grid-template-columns: 1fr;
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        .dash-chart-box       { height: 240px; }
+        .dash-chart-box.tall  { height: 280px; }
+
+        .dash-pro-title { font-size: .72rem; padding: 10px 12px; }
+        .dash-pro-table { font-size: .76rem; }
+        .dash-pro-table thead th { font-size: .62rem; padding: 8px 6px; }
+        .dash-pro-table tbody td { padding: 7px 6px; }
+
+        .dash-mini-table-wrap { margin: 0 8px 12px; }
+        .dash-mini-table { font-size: .75rem; }
+        .dash-mini-table th { font-size: .66rem; padding: 9px 7px; }
+        .dash-mini-table td { padding: 7px 7px; }
+
+        .dash-io-row .sf { width: 100%; }
+    }
+
+    @media (max-width: 480px) {
+        .dash-kpi-grid { grid-template-columns: 1fr; }
+        .dash-kpi .val { font-size: 1.6rem; }
+        .dash-chart-box       { height: 220px; }
+        .dash-chart-box.tall  { height: 260px; }
+    }
 </style>
 
 <div class="dash-wrap">
@@ -881,15 +943,15 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'dashboard_pro_summaries') {
         rateEl.className = 'val';
         var rate = '—';
         if (a.totIns > 0) {
-            rate = (Math.round(a.totDef / a.totIns * 1000) / 10) + '%';
             var pctNum = (a.totDef / a.totIns) * 100;
+            rate = pctNum.toFixed(2) + '%';
             if (pctNum <= 0) { rateEl.classList.add('kpi-rate-good'); }
             else if (pctNum <= 5) { rateEl.classList.add('kpi-rate-warn'); }
             else { rateEl.classList.add('kpi-rate-bad'); }
         } else if (a.n === 0) {
             rate = '—';
         } else {
-            rate = '0%';
+            rate = '0.00%';
             rateEl.classList.add('kpi-rate-good');
         }
         rateEl.textContent = rate;
