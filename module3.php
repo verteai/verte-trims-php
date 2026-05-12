@@ -25,6 +25,11 @@ function reportSqlAndParams($from, $to, $supplier, $brand, $io) {
             a.Vendor_Name                               AS [SUPPLIER NAME],
             a.IO_Num                                    AS [IO NUM],
             a.PO_Num                                    AS [PO NUM],
+            a.GR_Num                                    AS [GR NUM],
+            a.Vessel                                    AS [VESSEL],
+            a.Voyage                                    AS [VOYAGE],
+            a.Container_Num                             AS CONTAINER_NUM,
+            a.HBL                                       AS [HBL],
             a.Custome_Name                              AS [BRAND],
             c.description                               AS [TYPE OF TRIMS],
             SUM(a.Total_Qty)                            AS [TTL QTY],
@@ -43,11 +48,12 @@ function reportSqlAndParams($from, $to, $supplier, $brand, $io) {
         GROUP BY
             d.description, e.description,
             CONVERT(VARCHAR(10), a.Inspection_Date,101),
-            a.Vendor_Name, a.IO_Num, a.PO_Num, a.Custome_Name, c.description,
+            a.Vendor_Name, a.IO_Num, a.PO_Num, a.GR_Num, a.Vessel, a.Voyage, a.Container_Num, a.HBL,
+            a.Custome_Name, c.description,
             b.description, a.Result
         ORDER BY
             CONVERT(VARCHAR(10), a.Inspection_Date,101),
-            a.Vendor_Name, a.IO_Num, a.PO_Num, c.description
+            a.Vendor_Name, a.IO_Num, a.PO_Num, a.Vessel, a.Voyage, a.Container_Num, a.HBL, c.description
     ";
     return array($sql, $params);
 }
@@ -77,6 +83,123 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'load_report') {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AJAX: export_excel → download XLSX
+// ═══════════════════════════════════════════════════════════════════════════
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_excel') {
+
+    require_once dirname(__FILE__) . '/Library/simple_xlsx.php';
+
+    $from     = isset($_GET['from'])     ? trim($_GET['from'])     : '';
+    $to       = isset($_GET['to'])       ? trim($_GET['to'])       : '';
+    $supplier = isset($_GET['supplier']) ? trim($_GET['supplier']) : '';
+    $brand    = isset($_GET['brand'])    ? trim($_GET['brand'])    : '';
+    $io       = isset($_GET['io'])       ? trim($_GET['io'])       : '';
+    if ($from === '' || $to === '') { die('Date range is required'); }
+
+    $qp   = reportSqlAndParams($from, $to, $supplier, $brand, $io);
+    $rows = dbQuery($qp[0], $qp[1]);
+    if (isset($rows['__error'])) { die($rows['__error']); }
+
+    $headers = array(
+        'MONTH','WEEK','DATE','SUPPLIER NAME','IO NUM','PO NUM',
+        'GR NUM','VESSEL','VOYAGE','CONTAINER #','HBL','BRAND','TYPE OF TRIMS','TTL QTY','QTY INSPECTED',
+        'QTY DEFECTS','TYPE OF DEFECTS','RESULT'
+    );
+    $widths = array(10, 8, 12, 26, 12, 12, 14, 18, 10, 10, 12, 16, 20, 11, 14, 12, 20, 12);
+    // Cell style per column for data rows
+    $colStyles = array(
+        SimpleXlsx::S_DATA_CENTER, // MONTH
+        SimpleXlsx::S_DATA_CENTER, // WEEK
+        SimpleXlsx::S_DATA_CENTER, // DATE
+        SimpleXlsx::S_DATA_LEFT,   // SUPPLIER NAME
+        SimpleXlsx::S_DATA_LEFT,   // IO NUM
+        SimpleXlsx::S_DATA_LEFT,   // PO NUM
+        SimpleXlsx::S_DATA_LEFT,   // GR NUM
+        SimpleXlsx::S_DATA_LEFT,   // VESSEL
+        SimpleXlsx::S_DATA_LEFT,   // VOYAGE
+        SimpleXlsx::S_DATA_LEFT,   // CONTAINER #
+        SimpleXlsx::S_DATA_LEFT,   // HBL
+        SimpleXlsx::S_DATA_LEFT,   // BRAND
+        SimpleXlsx::S_DATA_LEFT,   // TYPE OF TRIMS
+        SimpleXlsx::S_DATA_NUM,    // TTL QTY
+        SimpleXlsx::S_DATA_NUM,    // QTY INSPECTED
+        SimpleXlsx::S_DATA_NUM,    // QTY DEFECTS
+        SimpleXlsx::S_DATA_LEFT,   // TYPE OF DEFECTS
+        SimpleXlsx::S_DATA_CENTER  // RESULT
+    );
+
+    $xlsx = new SimpleXlsx('Trims Report');
+    for ($i = 0; $i < count($widths); $i++) { $xlsx->setColWidth($i, $widths[$i]); }
+
+    // Title + period (rows 0 & 1, merged across all columns)
+    $lastCol = count($headers) - 1;
+    $titleRow = array_fill(0, count($headers), '');
+    $titleRow[0] = 'TRIMS INSPECTION REPORT';
+    $xlsx->addRow($titleRow, SimpleXlsx::S_TITLE);
+    $xlsx->mergeRange(0, 0, 0, $lastCol);
+    $xlsx->setRowHeight(0, 22);
+
+    $subRow = array_fill(0, count($headers), '');
+    $subRow[0] = 'Period: ' . $from . '  to  ' . $to;
+    $xlsx->addRow($subRow, SimpleXlsx::S_SUBTITLE);
+    $xlsx->mergeRange(1, 0, 1, $lastCol);
+    $xlsx->addBlankRow();
+
+    // Column header row
+    $xlsx->addRow($headers, SimpleXlsx::S_HEADER);
+    $xlsx->setRowHeight($xlsx->rowCount() - 1, 28);
+
+    // Data rows
+    $totQty = 0; $totIns = 0; $totDef = 0;
+    foreach ($rows as $r) {
+        $rowData = array(
+            isset($r['MONTH'])           ? $r['MONTH']           : '',
+            isset($r['WEEK'])            ? $r['WEEK']            : '',
+            isset($r['DATE'])            ? $r['DATE']            : '',
+            isset($r['SUPPLIER NAME'])   ? $r['SUPPLIER NAME']   : '',
+            isset($r['IO NUM'])          ? $r['IO NUM']          : '',
+            isset($r['PO NUM'])          ? $r['PO NUM']          : '',
+            isset($r['GR NUM'])          ? $r['GR NUM']          : '',
+            isset($r['VESSEL'])          ? $r['VESSEL']          : '',
+            isset($r['VOYAGE'])          ? $r['VOYAGE']          : '',
+            isset($r['CONTAINER_NUM'])   ? $r['CONTAINER_NUM']   : '',
+            isset($r['HBL'])             ? $r['HBL']             : '',
+            isset($r['BRAND'])           ? $r['BRAND']           : '',
+            isset($r['TYPE OF TRIMS'])   ? $r['TYPE OF TRIMS']   : '',
+            isset($r['TTL QTY'])         ? (int)$r['TTL QTY']    : 0,
+            isset($r['QTY INSPECTED'])   ? (int)$r['QTY INSPECTED'] : 0,
+            isset($r['QTY DEFECTS'])     ? (int)$r['QTY DEFECTS']   : 0,
+            isset($r['TYPE OF DEFECTS']) ? $r['TYPE OF DEFECTS'] : '',
+            isset($r['RESULT'])          ? $r['RESULT']          : '',
+        );
+        $totQty += $rowData[13];
+        $totIns += $rowData[14];
+        $totDef += $rowData[15];
+        $xlsx->addRow($rowData, SimpleXlsx::S_DATA_LEFT, $colStyles);
+    }
+
+    // Grand total row
+    if (count($rows) > 0) {
+        $totalRow = array('GRAND TOTAL','','','','','','','','','','','','', $totQty, $totIns, $totDef, '', '');
+        $totalStyles = array(
+            0=>SimpleXlsx::S_TOTAL_LABEL, 1=>SimpleXlsx::S_TOTAL_LABEL, 2=>SimpleXlsx::S_TOTAL_LABEL,
+            3=>SimpleXlsx::S_TOTAL_LABEL, 4=>SimpleXlsx::S_TOTAL_LABEL, 5=>SimpleXlsx::S_TOTAL_LABEL,
+            6=>SimpleXlsx::S_TOTAL_LABEL, 7=>SimpleXlsx::S_TOTAL_LABEL, 8=>SimpleXlsx::S_TOTAL_LABEL,
+            9=>SimpleXlsx::S_TOTAL_LABEL,10=>SimpleXlsx::S_TOTAL_LABEL,11=>SimpleXlsx::S_TOTAL_LABEL,12=>SimpleXlsx::S_TOTAL_LABEL,
+            13=>SimpleXlsx::S_TOTAL_NUM,  14=>SimpleXlsx::S_TOTAL_NUM, 15=>SimpleXlsx::S_TOTAL_NUM,
+            16=>SimpleXlsx::S_TOTAL_LABEL,17=>SimpleXlsx::S_TOTAL_LABEL
+        );
+        $xlsx->addRow($totalRow, SimpleXlsx::S_TOTAL_LABEL, $totalStyles);
+        // Merge label across cols 0..12
+        $xlsx->mergeRange($xlsx->rowCount() - 1, 0, $xlsx->rowCount() - 1, 12);
+    }
+
+    $filename = 'TRIMS_Report_' . $from . '_to_' . $to . '.xlsx';
+    $xlsx->download($filename);
+    exit;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AJAX: export_pdf → download PDF (FPDF)
 // ═══════════════════════════════════════════════════════════════════════════
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
@@ -102,26 +225,30 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
     // A4 Landscape: 297mm wide, margins 10mm each side → 277mm usable
     $headers = array(
         'MONTH','WEEK','DATE','SUPPLIER NAME','IO NUM','PO NUM',
-        'BRAND','TYPE OF TRIMS','TTL QTY','QTY INSPECTED',
+        'GR NUM','VESSEL','VOYAGE','CONT.#','HBL','BRAND','TYPE OF TRIMS','TTL QTY','QTY INSPECTED',
         'QTY DEFECTS','TYPE OF DEFECTS','RESULT'
     );
     $widths = array(
-        18,   // MONTH
-        14,   // WEEK
-        18,   // DATE
-        32,   // SUPPLIER NAME
-        16,   // IO NUM
-        16,   // PO NUM
-        22,   // BRAND
-        28,   // TYPE OF TRIMS
-        16,   // TTL QTY
-        18,   // QTY INSPECTED
-        16,   // QTY DEFECTS
-        27,   // TYPE OF DEFECTS
-        16    // RESULT
-        // Total = 257mm — fits within 277mm usable width
+        14,   // MONTH
+        12,   // WEEK
+        16,   // DATE
+        24,   // SUPPLIER NAME
+        14,   // IO NUM
+        13,   // PO NUM
+        14,   // GR NUM
+        18,   // VESSEL
+        10,   // VOYAGE
+        12,   // CONTAINER
+        12,   // HBL
+        14,   // BRAND
+        21,   // TYPE OF TRIMS
+        14,   // TTL QTY
+        16,   // QTY INSPECTED
+        14,   // QTY DEFECTS
+        19,   // TYPE OF DEFECTS
+        14    // RESULT
     );
-    $aligns = array('C','C','C','L','L','L','L','L','R','R','R','L','C');
+    $aligns = array('C','C','C','L','L','L','L','L','L','L','L','L','L','R','R','R','L','C');
 
     // ── FPDF custom class ──────────────────────────────────────────────────
     class TrimsPDF extends FPDF {
@@ -315,6 +442,11 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
             isset($r['SUPPLIER NAME'])   ? $r['SUPPLIER NAME']   : '',
             isset($r['IO NUM'])          ? $r['IO NUM']          : '',
             isset($r['PO NUM'])          ? $r['PO NUM']          : '',
+            isset($r['GR NUM'])          ? $r['GR NUM']          : '',
+            isset($r['VESSEL'])          ? $r['VESSEL']          : '',
+            isset($r['VOYAGE'])          ? $r['VOYAGE']          : '',
+            isset($r['CONTAINER_NUM'])   ? $r['CONTAINER_NUM']   : '',
+            isset($r['HBL'])             ? $r['HBL']             : '',
             isset($r['BRAND'])           ? $r['BRAND']           : '',
             isset($r['TYPE OF TRIMS'])   ? $r['TYPE OF TRIMS']   : '',
             isset($r['TTL QTY'])         ? $r['TTL QTY']         : '',
@@ -342,12 +474,13 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
         $pdf->SetFillColor(26, 58, 92);
         $pdf->SetTextColor(255, 255, 255);
 
-        $labelW = $widths[0]+$widths[1]+$widths[2]+$widths[3]+$widths[4]+$widths[5]+$widths[6]+$widths[7];
+        $labelW = $widths[0]+$widths[1]+$widths[2]+$widths[3]+$widths[4]+$widths[5]
+                + $widths[6]+$widths[7]+$widths[8]+$widths[9]+$widths[10]+$widths[11]+$widths[12];
         $pdf->Cell($labelW,           $totH, 'GRAND TOTAL',    1, 0, 'R', true);
-        $pdf->Cell($widths[8],        $totH, (string)$totQty,  1, 0, 'R', true);
-        $pdf->Cell($widths[9],        $totH, (string)$totIns,  1, 0, 'R', true);
-        $pdf->Cell($widths[10],       $totH, (string)$totDef,  1, 0, 'R', true);
-        $pdf->Cell($widths[11]+$widths[12], $totH, '', 1, 1, 'C', true);
+        $pdf->Cell($widths[13],       $totH, (string)$totQty,  1, 0, 'R', true);
+        $pdf->Cell($widths[14],       $totH, (string)$totIns,  1, 0, 'R', true);
+        $pdf->Cell($widths[15],       $totH, (string)$totDef,  1, 0, 'R', true);
+        $pdf->Cell($widths[16]+$widths[17], $totH, '', 1, 1, 'C', true);
         $pdf->SetTextColor(0, 0, 0);
     }
 
@@ -369,7 +502,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
     font-size:.88rem; margin-right:12px;
 }
 .tbl-container { overflow-x:auto; }
-#reportTable { min-width:1200px; border-collapse:collapse; font-size:.82rem; width:100%; }
+#reportTable { min-width:1700px; border-collapse:collapse; font-size:.82rem; width:100%; }
 #reportTable th {
     background:#1a3a5c; color:#fff; padding:9px 8px;
     text-align:center; white-space:nowrap; border:1px solid #c8d0da;
@@ -387,8 +520,29 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
 .badge-hold { background:#fff8e1; color:#f57f17; padding:2px 8px; border-radius:10px; font-weight:700; font-size:.75rem; }
 .badge-repl { background:#e8eaf6; color:#283593; padding:2px 8px; border-radius:10px; font-weight:700; font-size:.75rem; }
 .summary-bar { overflow:hidden; margin-bottom:10px; font-size:.82rem; color:#555; }
-.summary-bar span { margin-right:18px; }
+.summary-bar span { margin-right:18px; display:inline-block; }
 .summary-bar strong { color:#1a3a5c; }
+
+/* ── Mobile responsive ── */
+@media (max-width: 768px){
+    .date-row { display:flex; flex-wrap:wrap; gap:8px; }
+    .date-row label { width:100%; margin:0; }
+    .date-row input[type=date]{
+        flex:1 1 140px;
+        margin-right:0;
+        width:100%;
+        min-width:0;
+    }
+    .date-row .btn{
+        flex:1 1 100%;
+        margin-left:0 !important;
+        margin-top:4px;
+    }
+    .summary-bar span { margin-right:12px; margin-bottom:4px; }
+    #reportTable { font-size:.76rem; min-width:1180px; }
+    #reportTable th { padding:8px 6px; }
+    #reportTable td { padding:6px 6px; }
+}
 </style>
 </head>
 <body>
@@ -403,6 +557,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
         <input type="date" id="dateTo">
         <button class="btn btn-primary" onclick="loadReport()">&#9654; Generate Report</button>
         <button class="btn btn-secondary" style="margin-left:6px;" onclick="exportPDF()">&#8659; Export PDF</button>
+        <button class="btn btn-secondary" style="margin-left:6px;background:#2e7d32;color:#fff;border-color:#2e7d32;" onclick="exportExcel()">&#8659; Export Excel</button>
     </div>
     <div class="summary-bar" id="summaryBar"></div>
 </div>
@@ -416,12 +571,13 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
                 <tr>
                     <th>MONTH</th><th>WEEK</th><th>DATE</th>
                     <th>SUPPLIER NAME</th><th>IO NUM</th><th>PO NUM</th>
+                    <th>GR NUM</th><th>VESSEL</th><th>VOYAGE</th><th>CONTAINER #</th><th>HBL</th>
                     <th>BRAND</th><th>TYPE OF TRIMS</th><th>TTL QTY</th>
                     <th>QTY INSPECTED</th><th>QTY DEFECTS</th><th>TYPE OF DEFECTS</th><th>RESULT</th>
                 </tr>
             </thead>
             <tbody id="reportBody">
-                <tr><td colspan="13" style="text-align:center;color:#999;padding:20px;">
+                <tr><td colspan="18" style="text-align:center;color:#999;padding:20px;">
                     Select a date range and click Generate Report.
                 </td></tr>
             </tbody>
@@ -468,7 +624,7 @@ function loadReport() {
     if (from > to)    { alert('Date From cannot be later than Date To.'); return; }
 
     document.getElementById('reportBody').innerHTML =
-        '<tr><td colspan="13" style="text-align:center;color:#999;padding:20px;">Loading&#8230;</td></tr>';
+        '<tr><td colspan="18" style="text-align:center;color:#999;padding:20px;">Loading&#8230;</td></tr>';
     document.getElementById('summaryBar').innerHTML = '';
 
     ajax3(
@@ -476,12 +632,12 @@ function loadReport() {
         function(err, rows) {
             if (err || !rows) {
                 document.getElementById('reportBody').innerHTML =
-                    '<tr><td colspan="13" style="color:#c62828;text-align:center;">Failed to load report.</td></tr>';
+                    '<tr><td colspan="18" style="color:#c62828;text-align:center;">Failed to load report.</td></tr>';
                 return;
             }
             if (rows.error) {
                 document.getElementById('reportBody').innerHTML =
-                    '<tr><td colspan="13" style="color:#c62828;text-align:center;">' + esc(rows.error) + '</td></tr>';
+                    '<tr><td colspan="18" style="color:#c62828;text-align:center;">' + esc(rows.error) + '</td></tr>';
                 return;
             }
             renderRows(rows);
@@ -492,7 +648,7 @@ function loadReport() {
 function renderRows(rows) {
     if (!rows || rows.length === 0) {
         document.getElementById('reportBody').innerHTML =
-            '<tr><td colspan="13" style="text-align:center;color:#999;padding:20px;">No records found.</td></tr>';
+            '<tr><td colspan="18" style="text-align:center;color:#999;padding:20px;">No records found.</td></tr>';
         document.getElementById('summaryBar').innerHTML = '';
         return;
     }
@@ -518,6 +674,11 @@ function renderRows(rows) {
             '<td>'                + esc(r['SUPPLIER NAME'])   + '</td>' +
             '<td class="td-ctr">' + esc(r['IO NUM'])          + '</td>' +
             '<td class="td-ctr">' + esc(r['PO NUM'])          + '</td>' +
+            '<td class="td-ctr">' + esc(r['GR NUM'])          + '</td>' +
+            '<td>'                + esc(r['VESSEL'])          + '</td>' +
+            '<td class="td-ctr">' + esc(r['VOYAGE'])          + '</td>' +
+            '<td>'                + esc(r['CONTAINER_NUM'])     + '</td>' +
+            '<td class="td-ctr">' + esc(r['HBL'])               + '</td>' +
             '<td>'                + esc(r['BRAND'])           + '</td>' +
             '<td>'                + esc(r['TYPE OF TRIMS'])   + '</td>' +
             '<td class="td-num">' + esc(r['TTL QTY'])         + '</td>' +
@@ -529,7 +690,7 @@ function renderRows(rows) {
     }
 
     html += '<tr style="background:#1a3a5c;color:#fff;font-weight:700;">' +
-        '<td colspan="8" style="text-align:right;padding:7px 8px;">GRAND TOTAL</td>' +
+        '<td colspan="13" style="text-align:right;padding:7px 8px;">GRAND TOTAL</td>' +
         '<td class="td-num" style="padding:7px 8px;">' + totQty + '</td>' +
         '<td class="td-num" style="padding:7px 8px;">' + totIns + '</td>' +
         '<td class="td-num" style="padding:7px 8px;">' + totDef + '</td>' +
@@ -556,6 +717,14 @@ function exportPDF() {
         BASE3 + '?ajax=export_pdf&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to),
         '_blank'
     );
+}
+
+function exportExcel() {
+    var from = document.getElementById('dateFrom').value;
+    var to   = document.getElementById('dateTo').value;
+    if (!from || !to) { alert('Please select both date From and To.'); return; }
+    window.location.href =
+        BASE3 + '?ajax=export_excel&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
 }
 </script>
 </body>

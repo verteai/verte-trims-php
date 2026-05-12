@@ -1,28 +1,14 @@
 <?php
-// Prevent timeout on large imports
+/* Long requests (grid load / refresh) — avoid PHP cutting off long-running SP */
 set_time_limit(0);
 ini_set('max_execution_time', 0);
 
 require_once dirname(__FILE__) . '/config.php';
 
-/* ── Column index map (0-based) ────────────────
-   Excel columns: A=0, N=13, X=23, Y=24, AA=26, AF=31, AJ=35, AK=36
-*/
-define('COL_IO_NUM',        31); // AF
-define('COL_PO_NUM',        13); // N
-define('COL_GMC_DESC',      23); // X
-define('COL_ADDL_DESC',     24); // Y
-define('COL_VENDOR_NAME',   26); // AA
-define('COL_CUSTOMER_NAME', 35); // AJ
-define('COL_PO_QTY',        36); // AK
-
-// Header row is Row 1; data starts Row 2
-define('HEADER_ROW', 1); // 1-based header row
-
-/* Allowed server-side sort columns (security whitelist) */
+/* Allowed server-side sort columns (security whitelist; matches TRIMS_TBL_RAWDATA) */
 $ALLOWED_SORT = array(
     'IO_Num','PO_Num','GMC_Description','Addl_Description',
-    'Vendor_Name','Customer_Name','PO_Qty'
+    'Vendor_Name','Customer_Name','GR_Num','Ship_Mode','Vessel','Voyage','Container_Num','Uom','HBL','MBL','PO_Qty'
 );
 
 /* ═══════════════════════════════════════════
@@ -44,8 +30,16 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'list') {
     if ($search !== '') {
         $like  = '%' . $search . '%';
         $where = "WHERE IO_Num LIKE ? OR PO_Num LIKE ? OR GMC_Description LIKE ?
-                  OR Addl_Description LIKE ? OR Vendor_Name LIKE ? OR Customer_Name LIKE ?";
-        $params = array($like,$like,$like,$like,$like,$like);
+                  OR Addl_Description LIKE ? OR Vendor_Name LIKE ? OR Customer_Name LIKE ?
+                  OR ISNULL(CAST(GR_Num AS VARCHAR(64)),'') LIKE ?
+                  OR ISNULL(CAST(Ship_Mode AS VARCHAR(128)),'') LIKE ?
+                  OR ISNULL(CAST(Vessel AS VARCHAR(128)),'') LIKE ?
+                  OR ISNULL(CAST(Voyage AS VARCHAR(128)),'') LIKE ?
+                  OR ISNULL(CAST(Container_Num AS VARCHAR(128)),'') LIKE ?
+                  OR ISNULL(CAST(Uom AS VARCHAR(64)),'') LIKE ?
+                  OR ISNULL(CAST(HBL AS VARCHAR(128)),'') LIKE ?
+                  OR ISNULL(CAST(MBL AS VARCHAR(128)),'') LIKE ?";
+        $params = array($like,$like,$like,$like,$like,$like,$like,$like,$like,$like,$like,$like,$like,$like);
     } else {
         $where  = '';
         $params = array();
@@ -58,7 +52,8 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'list') {
     $sql = "SELECT * FROM (
                 SELECT ROW_NUMBER() OVER (ORDER BY $sortCol $dir) AS rn,
                        id, IO_Num, PO_Num, GMC_Description, Addl_Description,
-                       Vendor_Name, Customer_Name, PO_Qty
+                       Vendor_Name, Customer_Name, GR_Num, Ship_Mode, Vessel, Voyage,
+                       Container_Num, Uom, HBL, MBL, PO_Qty
                 FROM TRIMS_TBL_RAWDATA $where
             ) AS paged
             WHERE rn > ? AND rn <= ?";
@@ -99,250 +94,54 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'delete' && $_SERVER['REQUEST_METH
 }
 
 /* ═══════════════════════════════════════════
-   Handle file upload (POST)
+   AJAX: refresh raw data — INSERT from linked-server view (may run a long time)
    ═══════════════════════════════════════════ */
-$uploadResult = null;
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'refresh_rawdata' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Content-Type: application/json');
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rawfile'])) {
-    $file = $_FILES['rawfile'];
-    $origName = isset($file['name']) ? $file['name'] : '';
-    $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+    set_time_limit(0);
+    ini_set('max_execution_time', '0');
+    @ini_set('default_socket_timeout', '7200');
+    ignore_user_abort(true);
 
-    if ($file['error'] !== UPLOAD_ERR_OK) {
-        $uploadResult = array('error' => 'Upload failed (PHP error code ' . $file['error'] . ').');
-    } elseif (!in_array($ext, array('xlsx','xls'))) {
-        $uploadResult = array('error' => 'Only .xlsx or .xls files are accepted.');
-    } else {
-        $safePath = makeSafeCopy($file['tmp_name'], $ext);
-        if ($safePath === false) {
-            $uploadResult = array('error' => 'Failed to prepare uploaded file (temp copy).');
-        } else {
-            $res = importExcelFile($safePath, $ext);
-            @unlink($safePath);
-            if (isset($res['error'])) {
-                $uploadResult = $res;
-            } else {
-                $uploadResult = array(
-                    'success'  => true,
-                    'inserted' => $res['inserted'],
-                    'skipped'  => $res['skipped'],
-                    'errors'   => $res['errors'],
-                    'read'     => $res['read'],
-                    'filename' => htmlspecialchars($origName, ENT_QUOTES, 'UTF-8')
-                );
-            }
+    $conn = getDB();
+
+    @mssql_query('SET NOCOUNT ON', $conn);
+    @mssql_query('SET ANSI_NULLS ON', $conn);
+    @mssql_query('SET ANSI_WARNINGS ON', $conn);
+    @mssql_query('SET LOCK_TIMEOUT -1', $conn);
+    @mssql_query('SET QUERY_GOVERNOR_COST_LIMIT 0', $conn);
+
+    $refreshSql = <<<'SQL'
+    SET ANSI_NULLS ON;
+    SET ANSI_WARNINGS ON;
+    exec TRIMS_USP_GETRAWDATA
+SQL;
+
+    $res = @mssql_query($refreshSql, $conn);
+
+    if (!$res) {
+        $detail = '';
+        if (function_exists('mssql_get_last_message')) {
+            $detail = trim((string)mssql_get_last_message());
         }
-    }
-}
-
-/* ─────────────────────────────────────────────
-   Import logic (UNCHANGED except header is row 1)
-   ───────────────────────────────────────────── */
-function importExcelFile($path, $ext) {
-    if ($ext === 'xlsx') {
-        $rows = readXlsxSimple($path);
-    } else {
-        $rows = readXlsComSimple($path);
-    }
-    if (isset($rows['error'])) return $rows;
-
-    $inserted = 0;
-    $skipped  = 0;
-    $errors   = 0;
-    $read     = 0;
-
-    // Data starts row 2 => index 1
-    for ($i = 1; $i < count($rows); $i++) {
-        $row = $rows[$i];
-
-        $io     = trimVal(getCol($row, COL_IO_NUM));
-        $po     = trimVal(getCol($row, COL_PO_NUM));
-        $gmc    = trimVal(getCol($row, COL_GMC_DESC));
-        $addl   = trimVal(getCol($row, COL_ADDL_DESC));
-        $vendor = trimVal(getCol($row, COL_VENDOR_NAME));
-        $cust   = trimVal(getCol($row, COL_CUSTOMER_NAME));
-        $qtyRaw = trimVal(getCol($row, COL_PO_QTY));
-        $qty    = (int)preg_replace('/[^0-9]/', '', $qtyRaw);
-
-        if ($io === '' && $po === '' && $vendor === '') { continue; }
-        $read++;
-
-        $chk = dbQuery(
-            "SELECT 1 FROM TRIMS_TBL_RAWDATA
-             WHERE IO_Num=? AND PO_Num=? AND GMC_Description=?
-               AND Addl_Description=? AND Vendor_Name=? AND Customer_Name=?",
-            array($io, $po, $gmc, $addl, $vendor, $cust)
-        );
-        if (!empty($chk) && !isset($chk['__error'])) { $skipped++; continue; }
-
-        $ok = dbExec(
-            "INSERT INTO TRIMS_TBL_RAWDATA
-             (IO_Num, PO_Num, GMC_Description, Addl_Description,
-              Vendor_Name, Customer_Name, PO_Qty)
-             VALUES (?,?,?,?,?,?,?)",
-            array($io, $po, $gmc, $addl, $vendor, $cust, $qty)
-        );
-
-        if ($ok !== false) { $inserted++; } else { $errors++; }
+        echo json_encode(array(
+            'error'  => 'Refresh INSERT failed.',
+            'detail' => $detail !== '' ? $detail : 'No SQL message returned. Check linked server, view name, and column list vs TRIMS_TBL_RAWDATA.'
+        ));
+        exit;
     }
 
-    return array('inserted'=>$inserted,'skipped'=>$skipped,'errors'=>$errors,'read'=>$read);
-}
+    do {
+        while (@mssql_fetch_row($res)) {}
+    } while (@mssql_next_result($res));
+    @mssql_free_result($res);
 
-/* ─────────────────────────────────────────────
-   XLSX reader (as in your main code)
-   ───────────────────────────────────────────── */
-function readXlsxSimple($path) {
-    if (!class_exists('ZipArchive')) {
-        return array('error' => 'ZipArchive is not enabled. Enable ZIP in php.ini.');
-    }
-
-    $tmpCopy = tempnam(sys_get_temp_dir(), 'xlsx_') . '.xlsx';
-    if (!@copy($path, $tmpCopy)) {
-        return array('error' => 'Cannot copy uploaded file to temp directory.');
-    }
-
-    $zip = new ZipArchive();
-    $opened = $zip->open($tmpCopy);
-    if ($opened !== true) {
-        @unlink($tmpCopy);
-        return array('error' => 'Cannot open XLSX (ZipArchive open failed).');
-    }
-
-    $shared = array();
-    $ssRaw  = $zip->getFromName('xl/sharedStrings.xml');
-    if ($ssRaw !== false) {
-        $ssRaw = str_replace(' xmlns=', ' ns_ignored=', $ssRaw);
-        $ssDoc = @simplexml_load_string($ssRaw);
-        if ($ssDoc) {
-            foreach ($ssDoc->si as $si) {
-                $str = '';
-                foreach ($si->xpath('.//t') as $t) { $str .= (string)$t; }
-                $shared[] = $str;
-            }
-        }
-    }
-
-    $sheetRaw = $zip->getFromName('xl/worksheets/sheet1.xml');
-    $zip->close();
-    @unlink($tmpCopy);
-
-    if ($sheetRaw === false) return array('error' => 'Cannot read sheet1.xml from XLSX.');
-
-    $sheetRaw = str_replace(' xmlns=', ' ns_ignored=', $sheetRaw);
-    $doc = @simplexml_load_string($sheetRaw);
-    if (!$doc || !isset($doc->sheetData)) return array('error' => 'No sheet data found.');
-
-    $rows = array();
-    foreach ($doc->sheetData->row as $row) {
-        $rowData = array();
-        foreach ($row->c as $cell) {
-            $ref    = (string)$cell['r'];
-            $colStr = preg_replace('/[0-9]+/', '', $ref);
-            $colIdx = colToIndex($colStr);
-            $type   = (string)$cell['t'];
-
-            if ($type === 's') {
-                $idx = (int)(string)$cell->v;
-                $rowData[$colIdx] = isset($shared[$idx]) ? $shared[$idx] : '';
-            } elseif ($type === 'inlineStr') {
-                $rowData[$colIdx] = (isset($cell->is->t)) ? (string)$cell->is->t : '';
-            } else {
-                $rowData[$colIdx] = ($cell->v !== null) ? (string)$cell->v : '';
-            }
-        }
-        $rows[] = $rowData;
-    }
-
-    return $rows;
-}
-
-/* ─────────────────────────────────────────────
-   XLS reader via COM (optional)
-   ───────────────────────────────────────────── */
-function readXlsComSimple($path) {
-    if (!class_exists('COM')) {
-        return array('error' => 'Reading .xls requires COM (Windows). Please convert to .xlsx.');
-    }
-    try {
-        $xl = new COM('Excel.Application');
-        $xl->Visible = false;
-        $xl->DisplayAlerts = false;
-
-        $wb = $xl->Workbooks->Open(realpath($path));
-        $ws = $wb->Worksheets(1);
-
-        $last = (int)$ws->UsedRange->Rows->Count;
-        $rows = array();
-
-        $cols = array(
-            COL_IO_NUM => COL_IO_NUM + 1,
-            COL_PO_NUM => COL_PO_NUM + 1,
-            COL_GMC_DESC => COL_GMC_DESC + 1,
-            COL_ADDL_DESC => COL_ADDL_DESC + 1,
-            COL_VENDOR_NAME => COL_VENDOR_NAME + 1,
-            COL_CUSTOMER_NAME => COL_CUSTOMER_NAME + 1,
-            COL_PO_QTY => COL_PO_QTY + 1
-        );
-
-        for ($r = 1; $r <= $last; $r++) {
-            $rowData = array();
-            foreach ($cols as $zeroIdx => $oneIdx) {
-                $rowData[$zeroIdx] = (string)$ws->Cells($r, $oneIdx)->Value;
-            }
-            $rows[] = $rowData;
-        }
-
-        $wb->Close(false);
-        $xl->Quit();
-        $xl = null;
-        return $rows;
-
-    } catch (Exception $e) {
-        return array('error' => 'COM error: ' . $e->getMessage());
-    }
-}
-
-function makeSafeCopy($tmp, $ext) {
-    $dir = sys_get_temp_dir();
-    $dest = rtrim($dir, "\\/") . DIRECTORY_SEPARATOR . 'trims_' . uniqid() . '.' . $ext;
-    if (!@copy($tmp, $dest)) return false;
-    return $dest;
-}
-
-function colToIndex($col) {
-    $col = strtoupper(trim($col));
-    $n   = 0;
-    for ($i = 0, $len = strlen($col); $i < $len; $i++) {
-        $n = $n * 26 + (ord($col[$i]) - 64);
-    }
-    return $n - 1;
-}
-
-function getCol($row, $idx) {
-    return isset($row[$idx]) ? $row[$idx] : '';
-}
-
-function trimVal($v) {
-    return trim((string)$v);
+    echo json_encode(array('success' => true));
+    exit;
 }
 ?>
 <style>
-/* Keep your existing styling */
-.upload-zone{
-    border:2px dashed #4db6f5;border-radius:8px;padding:28px 20px;text-align:center;
-    background:#f0f8ff;cursor:pointer;transition:background .2s,border-color .2s;
-}
-.upload-zone:hover,.upload-zone.drag-over{background:#ddf0ff;border-color:#1a73e8;}
-.upload-zone .uz-icon{font-size:2.2rem;margin-bottom:8px;color:#4db6f5;}
-.upload-zone .uz-label{font-size:.95rem;color:#555;}
-.upload-zone .uz-sub{font-size:.78rem;color:#999;margin-top:4px;}
-#fileInput{display:none;}
-#fileChosen{font-size:.82rem;color:#1a73e8;margin-top:6px;font-weight:600;min-height:18px;}
-
-.prog-wrap{background:#e0e0e0;border-radius:4px;height:8px;margin-top:10px;display:none;overflow:hidden;}
-.prog-bar{background:#1a73e8;height:8px;border-radius:4px;width:0;transition:width .3s;}
-
 .toolbar{overflow:hidden;margin-bottom:12px;}
 .toolbar .left{float:left;}
 .toolbar .right{float:right;}
@@ -356,64 +155,53 @@ function trimVal($v) {
 .pager button:disabled{opacity:.4;cursor:default;}
 .pager .pager-info{font-size:.8rem;color:#777;margin-top:6px;}
 
-.upload-result{margin-top:14px;}
+.refresh-toolbar{margin-top:10px;}
+#refreshRawStatus{font-size:.82rem;color:#555;margin-left:12px;}
 
 .tbl-container{overflow-x:auto;}
-#rawTable{min-width:900px;}
+#rawTable{min-width:1680px;}
 #rawTable td,#rawTable th{white-space:nowrap;}
 
 th.sortable{cursor:pointer;}
 th.sortable.asc:after{content:" ▲";font-size:.7em;}
 th.sortable.desc:after{content:" ▼";font-size:.7em;}
+
+/* ── Mobile responsive ── */
+@media (max-width: 768px){
+    .toolbar .left,
+    .toolbar .right{
+        float:none;
+        width:100%;
+    }
+    .toolbar .left{ margin-bottom:8px; }
+    .search-box{ width:100%; }
+    .toolbar .right{
+        display:flex;
+        flex-wrap:wrap;
+        align-items:center;
+        gap:6px;
+    }
+    .toolbar .right select{ flex:0 0 auto; }
+    #totalCount{ line-height:normal !important; margin-left:auto; }
+
+    .pager button{
+        padding:6px 9px;
+        font-size:.78rem;
+        margin:1px;
+    }
+    #rawTable{ font-size:.78rem; min-width:1100px; }
+    #rawTable td, #rawTable th{ padding:7px 8px; }
+}
 </style>
 
-<?php if ($uploadResult): ?>
-<div class="upload-result">
-    <?php if (isset($uploadResult['error'])): ?>
-        <div class="alert alert-err"><?php echo htmlspecialchars($uploadResult['error'], ENT_QUOTES, 'UTF-8'); ?></div>
-    <?php else: ?>
-        <div class="alert alert-ok">
-            <strong><?php echo $uploadResult['filename']; ?></strong> processed —
-            <strong><?php echo (int)$uploadResult['inserted']; ?></strong> inserted,
-            <strong><?php echo (int)$uploadResult['skipped']; ?></strong> skipped (duplicate),
-            <strong><?php echo (int)$uploadResult['errors']; ?></strong> errors.
-            <span style="color:#666;">(<?php echo (int)$uploadResult['read']; ?> rows read)</span>
-        </div>
-    <?php endif; ?>
-</div>
-<?php endif; ?>
-
-<!-- Upload Card -->
+<!-- Refresh raw data -->
 <div class="card">
-    <div class="card-title">Upload Raw Data (XLS / XLSX)</div>
-
-    <form id="uploadForm" method="POST" enctype="multipart/form-data">
-        <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click();">
-            <div class="uz-icon">📄</div>
-            <div class="uz-label">Click to browse or drag &amp; drop your file here</div>
-            <div class="uz-sub">Accepted: .xls, .xlsx • Header row: Row 1 • Data starts: Row 2</div>
-            <input type="file" id="fileInput" name="rawfile" accept=".xls,.xlsx">
-        </div>
-
-        <div id="fileChosen"></div>
-        <div class="prog-wrap" id="progWrap"><div class="prog-bar" id="progBar"></div></div>
-
-        <div style="margin-top:14px;">
-            <button type="submit" class="btn btn-primary" id="uploadBtn" disabled>Upload &amp; Import</button>
-            <span style="font-size:.8rem;color:#888;margin-left:10px;">
-                Duplicates (same IO + PO + GMC + Addl + Vendor + Customer) will be skipped.
-            </span>
-        </div>
-
-        <div style="margin-top:12px;background:#f7f9fb;border:1px solid #dde3ea;border-radius:6px;padding:10px 14px;font-size:.8rem;color:#555;">
-            <strong>Column mapping (Header Row 1):</strong><br>
-            IO Num = AF | PO Num = N | GMC Desc = X | Addl Desc = Y<br>
-            Vendor = AA | Customer = AJ | PO Qty = AK
-        </div>
-    </form>
+    <div class="card-title">Raw Data Feed</div>
+    <div class="refresh-toolbar">
+        <button type="button" class="btn btn-primary" id="refreshRawBtn">Refresh Raw Data</button>
+        <span id="refreshRawStatus"></span>
+    </div>
 </div>
-
-<!-- Raw Data Table Card -->
 <div class="card">
     <div class="card-title">Raw Data Records</div>
 
@@ -444,12 +232,20 @@ th.sortable.desc:after{content:" ▼";font-size:.7em;}
                 <th class="sortable" data-col="Addl_Description">Addl Description</th>
                 <th class="sortable" data-col="Vendor_Name">Vendor Name</th>
                 <th class="sortable" data-col="Customer_Name">Customer Name</th>
-                <th class="sortable" data-col="PO_Qty" style="width:80px;">PO Qty</th>
+                <th class="sortable" data-col="GR_Num">GR Num</th>
+                <th class="sortable" data-col="Ship_Mode">Ship Mode</th>
+                <th class="sortable" data-col="Vessel">Vessel</th>
+                <th class="sortable" data-col="Voyage">Voyage</th>
+                <th class="sortable" data-col="Container_Num">Container Num</th>
+                <th class="sortable" data-col="Uom">Uom</th>
+                <th class="sortable" data-col="HBL">HBL</th>
+                <th class="sortable" data-col="MBL">MBL</th>
+                <th class="sortable" data-col="PO_Qty" style="width:72px;">Rec Qty</th>
                 <th style="width:60px;">Action</th>
             </tr>
             </thead>
             <tbody id="rawBody">
-            <tr><td colspan="9" style="text-align:center;color:#999;padding:20px;">Loading...</td></tr>
+            <tr><td colspan="17" style="text-align:center;color:#999;padding:20px;">Loading...</td></tr>
             </tbody>
         </table>
     </div>
@@ -466,6 +262,18 @@ var BASE4 = 'module4.php';
 var sortCol = 'IO_Num';
 var sortDir = 'asc';
 var pageSize = 5;
+var RAW_COL_SPAN = 17;
+
+/** MSSQL driver may return mixed-case keys */
+function rowCol(r, name) {
+    if (!r) return '';
+    if (r[name] !== undefined && r[name] !== null) return r[name];
+    var low = name.toLowerCase();
+    for (var k in r) {
+        if (r.hasOwnProperty(k) && k.toLowerCase() === low) return r[k];
+    }
+    return '';
+}
 
 function trimStr(s){ return String(s || '').replace(/^\s+|\s+$/g,''); }
 
@@ -479,38 +287,44 @@ function esc(v) {
         .replace(/'/g,'&#039;');
 }
 
-document.getElementById('fileInput').onchange = function() {
-    var f = this.files[0];
-    if (f) {
-        document.getElementById('fileChosen').innerHTML = 'Selected: <strong>' + esc(f.name) + '</strong>';
-        document.getElementById('uploadBtn').disabled = false;
-    }
-};
+document.getElementById('refreshRawBtn').onclick = function() {
+    if (!confirm('Refresh raw data now? This loads from the linked server and may take a long time.')) return;
 
-var zone = document.getElementById('uploadZone');
-zone.ondragover = function(e){ e.preventDefault(); zone.className = 'upload-zone drag-over'; };
-zone.ondragleave = function(){ zone.className = 'upload-zone'; };
-zone.ondrop = function(e){
-    e.preventDefault();
-    zone.className = 'upload-zone';
-    var f = e.dataTransfer.files[0];
-    if (f) {
-        document.getElementById('fileChosen').innerHTML =
-            'Dropped: <strong>' + esc(f.name) + '</strong> (use Browse to select for upload)';
-    }
-};
+    var btn = document.getElementById('refreshRawBtn');
+    var st  = document.getElementById('refreshRawStatus');
+    btn.disabled = true;
+    st.innerHTML = '<span style="color:#1565c0;">Running… please wait.</span>';
 
-document.getElementById('uploadForm').onsubmit = function() {
-    var pw = document.getElementById('progWrap');
-    var pb = document.getElementById('progBar');
-    pw.style.display = 'block';
-    pb.style.width = '0%';
-    var pct = 0;
-    var iv = setInterval(function(){
-        pct += 8;
-        if (pct >= 90) { pct = 90; clearInterval(iv); }
-        pb.style.width = pct + '%';
-    }, 200);
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', BASE4 + '?ajax=refresh_rawdata', true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.timeout = 0;
+
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState !== 4) return;
+        btn.disabled = false;
+        if (xhr.status < 200 || xhr.status >= 300) {
+            st.innerHTML = '<span style="color:#c62828;">HTTP ' + xhr.status + '</span>';
+            return;
+        }
+        try {
+            var data = JSON.parse(xhr.responseText);
+            if (data.success) {
+                st.innerHTML = '<span style="color:#2e7d32;">Finished successfully.</span>';
+                loadTable();
+            } else {
+                var msg = esc(data.error || 'Failed.');
+                if (data.detail) {
+                    msg += '<br><span style="font-size:.78rem;">' + esc(data.detail) + '</span>';
+                }
+                st.innerHTML = '<span style="color:#c62828;">' + msg + '</span>';
+            }
+        } catch (e) {
+            st.innerHTML = '<span style="color:#c62828;">Invalid server response.</span>';
+        }
+    };
+
+    xhr.send('{}');
 };
 
 document.getElementById('searchBox').onkeyup = function() {
@@ -550,12 +364,12 @@ function loadTable() {
         + '&q=' + encodeURIComponent(q);
 
     document.getElementById('rawBody').innerHTML =
-        '<tr><td colspan="9" style="text-align:center;color:#999;padding:16px;">Loading...</td></tr>';
+        '<tr><td colspan="' + RAW_COL_SPAN + '" style="text-align:center;color:#999;padding:16px;">Loading...</td></tr>';
 
     ajaxJSON('GET', url, null, function(err, data){
         if (err || !data) {
             document.getElementById('rawBody').innerHTML =
-                '<tr><td colspan="9" style="text-align:center;color:#c62828;">Error loading data.</td></tr>';
+                '<tr><td colspan="' + RAW_COL_SPAN + '" style="text-align:center;color:#c62828;">Error loading data.</td></tr>';
             return;
         }
 
@@ -574,7 +388,7 @@ function renderTable(data) {
 
     if (!rows || rows.length === 0) {
         tbody.innerHTML =
-            '<tr><td colspan="9" style="text-align:center;color:#999;padding:20px;">No records found.</td></tr>';
+            '<tr><td colspan="' + RAW_COL_SPAN + '" style="text-align:center;color:#999;padding:20px;">No records found.</td></tr>';
         return;
     }
 
@@ -585,14 +399,22 @@ function renderTable(data) {
         var num = offset + i + 1;
         html += '<tr>' +
             '<td style="text-align:center;font-weight:700;color:#1a3a5c;">' + num + '</td>' +
-            '<td>' + esc(r.IO_Num) + '</td>' +
-            '<td>' + esc(r.PO_Num) + '</td>' +
-            '<td>' + esc(r.GMC_Description) + '</td>' +
-            '<td>' + esc(r.Addl_Description) + '</td>' +
-            '<td>' + esc(r.Vendor_Name) + '</td>' +
-            '<td>' + esc(r.Customer_Name) + '</td>' +
-            '<td style="text-align:right;">' + esc(r.PO_Qty) + '</td>' +
-            '<td><button class="btn btn-danger btn-sm" onclick="deleteRow(' + r.id + ', this)">Del</button></td>' +
+            '<td>' + esc(rowCol(r,'IO_Num')) + '</td>' +
+            '<td>' + esc(rowCol(r,'PO_Num')) + '</td>' +
+            '<td>' + esc(rowCol(r,'GMC_Description')) + '</td>' +
+            '<td>' + esc(rowCol(r,'Addl_Description')) + '</td>' +
+            '<td>' + esc(rowCol(r,'Vendor_Name')) + '</td>' +
+            '<td>' + esc(rowCol(r,'Customer_Name')) + '</td>' +
+            '<td>' + esc(rowCol(r,'GR_Num')) + '</td>' +
+            '<td>' + esc(rowCol(r,'Ship_Mode')) + '</td>' +
+            '<td>' + esc(rowCol(r,'Vessel')) + '</td>' +
+            '<td>' + esc(rowCol(r,'Voyage')) + '</td>' +
+            '<td>' + esc(rowCol(r,'Container_Num')) + '</td>' +
+            '<td>' + esc(rowCol(r,'Uom')) + '</td>' +
+            '<td>' + esc(rowCol(r,'HBL')) + '</td>' +
+            '<td>' + esc(rowCol(r,'MBL')) + '</td>' +
+            '<td style="text-align:right;">' + esc(rowCol(r,'PO_Qty')) + '</td>' +
+            '<td><button class="btn btn-danger btn-sm" onclick="deleteRow(' + rowCol(r,'id') + ', this)">Del</button></td>' +
             '</tr>';
     }
     tbody.innerHTML = html;

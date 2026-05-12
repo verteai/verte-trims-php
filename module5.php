@@ -182,6 +182,143 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'load_summary') {
 }
 
 // ═══════════════════════════════════════════
+// AJAX: export_excel → download XLSX
+// ═══════════════════════════════════════════
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_excel') {
+
+    require_once dirname(__FILE__) . '/Library/simple_xlsx.php';
+
+    $from     = isset($_GET['from'])     ? trim($_GET['from'])     : '';
+    $to       = isset($_GET['to'])       ? trim($_GET['to'])       : '';
+    $supplier = isset($_GET['supplier']) ? trim($_GET['supplier']) : '';
+    $brand    = isset($_GET['brand'])    ? trim($_GET['brand'])    : '';
+    $io       = isset($_GET['io'])       ? trim($_GET['io'])       : '';
+    if ($from === '' || $to === '') { die('Date range is required'); }
+
+    $data = buildPivot($from, $to, $supplier, $brand, $io);
+    if (isset($data['error'])) { die($data['error']); }
+
+    $rows         = $data['rows'];
+    $defectLabels = $data['defect_cols'];
+    $supLabel     = ($supplier === '' || $supplier === 'ALL') ? 'All Suppliers' : $supplier;
+    $brandLabel   = ($brand    === '' || $brand    === 'ALL') ? ''              : $brand;
+
+    $defCount     = count($defectLabels);
+    $totalCols    = 5 + $defCount; // TRIMS, TTL QTY, QTY INSPECTED, QTY DEFECTS, %, ...defects
+    $lastColIdx   = $totalCols - 1;
+
+    $xlsx = new SimpleXlsx('Performance Summary');
+    // Column widths: TRIMS wider, stats narrower, defects fit names
+    $xlsx->setColWidth(0, 28);  // TRIMS
+    $xlsx->setColWidth(1, 11);  // TTL QTY
+    $xlsx->setColWidth(2, 13);  // QTY INSPECTED
+    $xlsx->setColWidth(3, 12);  // QTY DEFECTS
+    $xlsx->setColWidth(4, 8);   // %
+    for ($i = 0; $i < $defCount; $i++) { $xlsx->setColWidth(5 + $i, 16); }
+
+    // ── Title row (merged) ─────────────────────────────────────
+    $titleRow = array_fill(0, $totalCols, '');
+    $titleRow[0] = 'TRIMS PERFORMANCE MONITORING SUMMARY';
+    $xlsx->addRow($titleRow, SimpleXlsx::S_TITLE);
+    $xlsx->mergeRange(0, 0, 0, $lastColIdx);
+    $xlsx->setRowHeight(0, 22);
+
+    // Subtitle row — period + supplier + brand
+    $subLine = 'Period: ' . $from . '  to  ' . $to;
+    if ($supLabel !== 'All Suppliers' && $supLabel !== '') { $subLine .= '   |   Supplier: ' . $supLabel; }
+    if ($brandLabel !== '')                                { $subLine .= '   |   Brand: '    . $brandLabel; }
+    $subRow = array_fill(0, $totalCols, '');
+    $subRow[0] = $subLine;
+    $xlsx->addRow($subRow, SimpleXlsx::S_SUBTITLE);
+    $xlsx->mergeRange(1, 0, 1, $lastColIdx);
+    $xlsx->addBlankRow();
+
+    // ── Two-tier header (rows index 3 and 4) ───────────────────
+    // Row index 3: TRIMS | TTL QTY | QTY INSPECTED | QTY DEFECTS | % | TYPE OF DEFECTS (spans defects)
+    // Row index 4: empty for first 5 (merged with row 3 vertically) | defect labels
+    $hdrRow1 = array('TRIMS','TTL QTY','QTY INSPECTED','QTY DEFECTS','%');
+    if ($defCount > 0) {
+        $hdrRow1[] = 'TYPE OF DEFECTS';
+        for ($i = 1; $i < $defCount; $i++) { $hdrRow1[] = ''; }
+    }
+    $row1Styles = array();
+    for ($i = 0; $i < 5; $i++) { $row1Styles[$i] = SimpleXlsx::S_HEADER; }
+    for ($i = 5; $i < $totalCols; $i++) { $row1Styles[$i] = SimpleXlsx::S_HEADER_PURPLE; }
+    $xlsx->addRow($hdrRow1, SimpleXlsx::S_HEADER, $row1Styles);
+    $hdrR1 = $xlsx->rowCount() - 1;
+    $xlsx->setRowHeight($hdrR1, 22);
+
+    // Row 2: blank for cols 0-4 (will be merged vertically with row 1), then defect labels
+    $hdrRow2 = array('','','','','');
+    for ($i = 0; $i < $defCount; $i++) { $hdrRow2[] = $defectLabels[$i]; }
+    $row2Styles = array();
+    for ($i = 0; $i < 5; $i++) { $row2Styles[$i] = SimpleXlsx::S_HEADER; }
+    for ($i = 5; $i < $totalCols; $i++) { $row2Styles[$i] = SimpleXlsx::S_HEADER_PURPLE; }
+    $xlsx->addRow($hdrRow2, SimpleXlsx::S_HEADER, $row2Styles);
+    $hdrR2 = $xlsx->rowCount() - 1;
+    $xlsx->setRowHeight($hdrR2, 30);
+
+    // Merge first 5 columns vertically across the two header rows
+    for ($c = 0; $c < 5; $c++) { $xlsx->mergeRange($hdrR1, $c, $hdrR2, $c); }
+    // Merge "TYPE OF DEFECTS" across all defect cols on header row 1
+    if ($defCount > 0) {
+        $xlsx->mergeRange($hdrR1, 5, $hdrR1, 5 + $defCount - 1);
+    }
+
+    // ── Data rows ──────────────────────────────────────────────
+    $totQty = 0; $totIns = 0; $totDef = 0;
+    $totDefects = array();
+    foreach ($defectLabels as $dl) { $totDefects[$dl] = 0; }
+
+    $dataStyles = array(
+        0 => SimpleXlsx::S_DATA_LEFT,
+        1 => SimpleXlsx::S_DATA_NUM,
+        2 => SimpleXlsx::S_DATA_NUM,
+        3 => SimpleXlsx::S_DATA_NUM,
+        4 => SimpleXlsx::S_DATA_CENTER
+    );
+    for ($i = 0; $i < $defCount; $i++) { $dataStyles[5 + $i] = SimpleXlsx::S_DATA_NUM; }
+
+    foreach ($rows as $r) {
+        $rowData = array(
+            $r['trim'],
+            (int)$r['ttl_qty'],
+            (int)$r['qty_inspected'],
+            (int)$r['qty_defects'],
+            ($r['pct'] !== null ? $r['pct'] . '%' : '-')
+        );
+        foreach ($defectLabels as $dl) {
+            $cnt = isset($r[$dl]) ? (int)$r[$dl] : 0;
+            $rowData[] = $cnt;
+            $totDefects[$dl] += $cnt;
+        }
+        $totQty += (int)$r['ttl_qty'];
+        $totIns += (int)$r['qty_inspected'];
+        $totDef += (int)$r['qty_defects'];
+        $xlsx->addRow($rowData, SimpleXlsx::S_DATA_LEFT, $dataStyles);
+    }
+
+    // ── Totals row ─────────────────────────────────────────────
+    $totPct  = $totIns > 0 ? round($totDef / $totIns * 100, 1) . '%' : '-';
+    $totData = array('TOTAL', $totQty, $totIns, $totDef, $totPct);
+    foreach ($defectLabels as $dl) { $totData[] = (int)$totDefects[$dl]; }
+
+    $totStyles = array(
+        0 => SimpleXlsx::S_TOTAL_LABEL,
+        1 => SimpleXlsx::S_TOTAL_NUM,
+        2 => SimpleXlsx::S_TOTAL_NUM,
+        3 => SimpleXlsx::S_TOTAL_NUM,
+        4 => SimpleXlsx::S_TOTAL_NUM
+    );
+    for ($i = 0; $i < $defCount; $i++) { $totStyles[5 + $i] = SimpleXlsx::S_TOTAL_NUM; }
+    $xlsx->addRow($totData, SimpleXlsx::S_TOTAL_LABEL, $totStyles);
+
+    $filename = 'TRIMS_Performance_Summary_' . $from . '_to_' . $to . '.xlsx';
+    $xlsx->download($filename);
+    exit;
+}
+
+// ═══════════════════════════════════════════
 // AJAX: export_pdf → download PDF (FPDF)
 // ═══════════════════════════════════════════
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
@@ -536,8 +673,39 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
     }
     #sumTable tfoot td:first-child { text-align:right; }
     .info-bar { font-size:.82rem; color:#555; margin-bottom:10px; overflow:hidden; }
-    .info-bar span { margin-right:16px; }
+    .info-bar span { margin-right:16px; display:inline-block; }
     .info-bar strong { color:#1a3a5c; }
+
+    /* ── Mobile responsive ── */
+    @media (max-width: 768px){
+        .filter-row{
+            display:flex;
+            flex-wrap:wrap;
+            gap:8px;
+        }
+        .filter-row label{
+            width:100%;
+            margin:0;
+        }
+        .filter-row input[type=date],
+        .filter-row select{
+            width:100%;
+            min-width:0;
+            margin-right:0;
+            flex:1 1 140px;
+        }
+        .filter-row .btn{
+            flex:1 1 100%;
+            margin-left:0 !important;
+            margin-top:4px;
+        }
+        .info-bar span { margin-right:10px; margin-bottom:4px; }
+        #sumTable { font-size:.72rem; min-width:780px; }
+        #sumTable thead tr.hdr-group th,
+        #sumTable thead tr.hdr-sub th { padding:4px 4px; font-size:.65rem; }
+        #sumTable tbody td { padding:4px 5px; }
+        #sumTable tbody td:first-child { min-width:110px; }
+    }
 </style>
 
 <!-- Filter Card -->
@@ -558,6 +726,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
         </select>
         <button class="btn btn-primary" onclick="loadSummary()">&#9654; Generate</button>
         <button class="btn btn-secondary" style="margin-left:6px;" onclick="exportPDF5()">&#8659; Export PDF</button>
+        <button class="btn btn-secondary" style="margin-left:6px;background:#2e7d32;color:#fff;border-color:#2e7d32;" onclick="exportExcel5()">&#8659; Export Excel</button>
     </div>
     <div class="info-bar" id="m5Info"></div>
 </div>
@@ -764,5 +933,16 @@ function exportPDF5() {
         '&brand='    + encodeURIComponent(f.brand),
         '_blank'
     );
+}
+
+function exportExcel5() {
+    var f = getFilters();
+    if (!f.from || !f.to) { alert('Please select both Date From and To.'); return; }
+    window.location.href =
+        BASE5 + '?ajax=export_excel' +
+        '&from='     + encodeURIComponent(f.from)     +
+        '&to='       + encodeURIComponent(f.to)       +
+        '&supplier=' + encodeURIComponent(f.supplier) +
+        '&brand='    + encodeURIComponent(f.brand);
 }
 </script>

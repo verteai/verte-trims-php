@@ -48,6 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TRIMS INSPECTION SYSTEM</title>
 
 <style>
@@ -57,17 +58,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 body{
     font-family: 'Segoe UI', Arial, sans-serif;
     background: linear-gradient(135deg, #1a3a5c, #243b55);
-    height: 100vh;
+    min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
     color:#333;
+    padding: 20px;
 }
 
 /* ===== Card ===== */
 .login-wrapper{
     background:#fff;
-    width:380px;
+    width:100%;
+    max-width:380px;
     border-radius:8px;
     box-shadow:0 10px 30px rgba(0,0,0,.35);
     overflow:hidden;
@@ -153,6 +156,18 @@ button:hover{ opacity:.9; }
     font-size:.75rem;
     color:#888;
     background:#f7f9fb;
+}
+
+/* ===== Mobile ===== */
+@media (max-width: 480px){
+    body{ padding:14px; }
+    .login-header{ padding:18px 16px; }
+    .login-header h1{ font-size:1.05rem; }
+    .login-header p{ font-size:.72rem; }
+    .login-body{ padding:20px 18px 22px; }
+    label{ font-size:.78rem; }
+    input{ font-size:.95rem; padding:11px 12px; }
+    button{ padding:11px; font-size:.95rem; }
 }
 </style>
 </head>

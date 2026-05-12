@@ -5,12 +5,12 @@
 //  No extra drivers or ODBC needed
 // ─────────────────────────────────────────────
 
-/*
-define('DB_SERVER',   ''); // or e.g. 'DESKTOP-ABC\SQLEXPRESS'
-define('DB_NAME',     '');   // your MSSQL database name
-define('DB_USER',     '');   // SQL Server login
-define('DB_PASS',     '');   // SQL Server password
-*/
+
+define('DB_SERVER',   '172.16.28.53'); // or e.g. 'DESKTOP-ABC\SQLEXPRESS'
+define('DB_NAME',     'QA_FAB_INSP');   // your MSSQL database name
+define('DB_USER',     'sa');   // SQL Server login
+define('DB_PASS',     '10c@1m@st3r');   // SQL Server password
+
 
 function getDB() {
     static $conn = null;

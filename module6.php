@@ -194,70 +194,150 @@ tbody tr:hover{background:#eef4ff;}
     color:#666;
     font-size:12px;
 }
+
+.tbl-scroll{
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+}
+.tbl-scroll table{ min-width:680px; }
+
+/* ── Form layout (responsive flex) ── */
+.form-row{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:flex-end;
+    gap:10px;
+}
+.form-row .field{
+    display:flex;
+    flex-direction:column;
+    flex:1 1 160px;
+    min-width:0;
+}
+.form-row .field > label{
+    font-size:12px;
+    font-weight:600;
+    color:#555;
+    margin-bottom:3px;
+}
+.form-row .field input[type=text],
+.form-row .field select{
+    width:100%;
+}
+.form-row .actions{
+    display:flex;
+    gap:6px;
+    flex:0 0 auto;
+}
+
+/* ── Mobile responsive ── */
+@media (max-width: 768px){
+    .card{ padding:12px; }
+    .table-top{
+        flex-direction:column;
+        align-items:stretch;
+        gap:8px;
+    }
+    .search-box{ width:100% !important; }
+
+    .form-row .actions{ flex:1 1 100%; }
+    .form-row .actions button{ flex:1; }
+
+    .pagination button{
+        margin:1px;
+        padding:6px 9px;
+        font-size:12px;
+    }
+}
 </style>
 
 </head>
 
 <body>
 
-<!-- ===== INPUT SECTION (ALWAYS ABOVE) ===== -->
+<!-- ================= INPUT (SAME DESIGN AS MODULE7) ================= -->
 <div class="card">
-<b>Add / Edit Record</b><br><br>
-<input type="hidden" id="id">
+    <div class="card-title">Add / Edit Dropdown</div>
 
-Category:
-<select id="category">
-<option value="">--</option>
-<option>1</option><option>2</option><option>3</option>
-<option>4</option><option>5</option>
-</select>
+    <input type="hidden" id="id">
 
-Cat Desc:
-<select id="cat_desc">
-<option>TRIMS</option>
-<option>DEFECTS</option>
-<option>BRAND</option>
-</select>
+    <div class="form-row">
+        <div class="field">
+            <label>Category</label>
+            <select id="category">
+                <option value="">--</option>
+                <option>1</option><option>2</option>
+                <option>3</option><option>4</option>
+                <option>5</option>
+            </select>
+        </div>
 
-Description:
-<input type="text" id="description">
+        <div class="field">
+            <label>Cat Desc</label>
+            <select id="cat_desc">
+                <option>TRIMS</option>
+                <option>DEFECTS</option>
+                <option>BRAND</option>
+            </select>
+        </div>
 
-For Grading:
-<select id="IsForGrading">
-<option value="0">No</option>
-<option value="1">Yes</option>
-</select>
+        <div class="field" style="flex:2 1 220px;">
+            <label>Description</label>
+            <input type="text" id="description">
+        </div>
 
-<button onclick="save()">Save</button>
-<button onclick="clearForm()">Clear</button>
+        <div class="field">
+            <label>For Grading</label>
+            <select id="IsForGrading">
+                <option value="0">No</option>
+                <option value="1">Yes</option>
+            </select>
+        </div>
+
+        <div class="actions">
+            <button class="primary" onclick="save()">Save</button>
+            <button onclick="clearForm()">Clear</button>
+        </div>
+    </div>
 </div>
 
-<!-- ===== PAGINATION CONTROLS ===== -->
+<!-- ================= GRID (SAME DESIGN AS MODULE7) ================= -->
 <div class="card">
-Show
-<select id="pageSize" onchange="loadGrid(1)">
-<option>5</option><option>10</option><option>20</option>
-<option>50</option><option>100</option>
-</select>
-entries
-<span id="pager"></span>
-</div>
+    <div class="card-title">Dropdown List</div>
 
-<!-- ===== DATAGRID (BELOW INPUT) ===== -->
-<div class="card">
-<table>
-<thead>
-<tr>
-<th onclick="sortBy('id')">ID</th>
-<th onclick="sortBy('category')">Category</th>
-<th onclick="sortBy('cat_desc')">Cat Desc</th>
-<th onclick="sortBy('description')">Description</th>
-<th onclick="sortBy('IsForGrading')">For Grading</th>
-<th>Action</th>
-</tr>
-</thead>
-<tbody id="gridBody"></tbody>
-</table>
+    <div class="table-top">
+        <input type="text" id="searchBox" class="search-box"
+               placeholder="Search Category, Cat Desc, Description"
+               onkeyup="filterGrid()">
+
+        <div>
+            Show
+            <select id="pageSize" onchange="loadGrid(1)">
+                <option>5</option><option>10</option>
+                <option>20</option><option>50</option>
+                <option>100</option>
+            </select>
+            <span class="small-note">Total: <b id="totalCount">0</b></span>
+        </div>
+    </div>
+
+    <div class="tbl-scroll">
+    <table>
+        <thead>
+        <tr>
+            <th onclick="sortBy('id')">ID</th>
+            <th onclick="sortBy('category')">Category</th>
+            <th onclick="sortBy('cat_desc')">Cat Desc</th>
+            <th onclick="sortBy('description')">Description</th>
+            <th onclick="sortBy('IsForGrading')">For Grading</th>
+            <th>Action</th>
+        </tr>
+        </thead>
+        <tbody id="gridBody"></tbody>
+    </table>
+    </div>
+
+    <div class="pagination" id="pager"></div>
 </div>
 
 <script>
@@ -265,13 +345,20 @@ var page=1, sortCol='id', sortDir='ASC';
 
 function loadGrid(p){
     page=p||page;
-    var ps=document.getElementById('pageSize').value;
+    var ps=pageSize.value;
     var x=new XMLHttpRequest();
-    x.open('GET','module6.php?ajax=load&page='+page+'&pageSize='+ps+
+    x.open('GET',
+        'module6.php?ajax=load&page='+page+
+        '&pageSize='+ps+
         '&sortCol='+sortCol+'&sortDir='+sortDir,true);
+
     x.onreadystatechange=function(){
         if(x.readyState!==4)return;
-        var r=JSON.parse(x.responseText), h='';
+        var r=JSON.parse(x.responseText);
+
+        totalCount.innerText=r.total;
+
+        var h='';
         for(var i=0;i<r.rows.length;i++){
             var d=r.rows[i];
             h+='<tr>'+
@@ -280,20 +367,23 @@ function loadGrid(p){
             '<td>'+d.cat_desc+'</td>'+
             '<td>'+d.description+'</td>'+
             '<td>'+(d.IsForGrading=='1'?'Yes':'No')+'</td>'+
-            '<td><button onclick=\'edit('+JSON.stringify(d)+')\'>Edit</button> '+
-            '<button class="danger" onclick="del('+d.id+')">Delete</button></td></tr>';
+            '<td>'+
+            '<button onclick=\'edit('+JSON.stringify(d)+')\'>Edit</button> '+
+            '<button class="danger" onclick="del('+d.id+')">Del</button>'+
+            '</td></tr>';
         }
-        gridBody.innerHTML=h||'<tr><td colspan="6">No data</td></tr>';
+        gridBody.innerHTML=h||'<tr><td colspan="6" style="text-align:center;">No data</td></tr>';
         buildPager(r.total,ps);
+        filterGrid();
     };
     x.send();
 }
 
 function buildPager(total,ps){
-    var pages=Math.ceil(total/ps), h=' Page: ';
+    var pages=Math.ceil(total/ps), h='';
     for(var i=1;i<=pages;i++){
-        h+='<button '+(i==page?'style="font-weight:bold"':'')+
-        ' onclick="loadGrid('+i+')">'+i+'</button> ';
+        h+='<button class="'+(i==page?'active':'')+
+        '" onclick="loadGrid('+i+')">'+i+'</button>';
     }
     pager.innerHTML=h;
 }
@@ -303,12 +393,22 @@ function sortBy(c){
     sortCol=c; loadGrid(1);
 }
 
+function filterGrid(){
+    var q=searchBox.value.toLowerCase();
+    var rows=document.querySelectorAll('#gridBody tr');
+    for(var i=0;i<rows.length;i++){
+        rows[i].style.display =
+        rows[i].innerText.toLowerCase().indexOf(q)>-1?'':'none';
+    }
+}
+
 function save(){
     var p='ajax=save&id='+id.value+
     '&category='+category.value+
     '&cat_desc='+cat_desc.value+
     '&description='+encodeURIComponent(description.value)+
     '&IsForGrading='+IsForGrading.value;
+
     var x=new XMLHttpRequest();
     x.open('POST','module6.php',true);
     x.setRequestHeader('Content-type','application/x-www-form-urlencoded');
@@ -324,18 +424,21 @@ function edit(d){
     IsForGrading.value=d.IsForGrading;
 }
 
-function del(id){
+function del(i){
     if(!confirm('Delete this record?'))return;
     var x=new XMLHttpRequest();
     x.open('POST','module6.php',true);
     x.setRequestHeader('Content-type','application/x-www-form-urlencoded');
     x.onreadystatechange=function(){if(x.readyState===4)loadGrid(1);};
-    x.send('ajax=delete&id='+id);
+    x.send('ajax=delete&id='+i);
 }
 
 function clearForm(){
-    id.value=''; category.value=''; cat_desc.value='TRIMS';
-    description.value=''; IsForGrading.value='0';
+    id.value='';
+    category.value='';
+    cat_desc.value='TRIMS';
+    description.value='';
+    IsForGrading.value='0';
 }
 
 loadGrid(1);
