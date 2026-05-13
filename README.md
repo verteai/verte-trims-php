@@ -2,7 +2,9 @@
 
 A web-based Quality Control and Inspection Management System built with PHP and Microsoft SQL Server. Designed to run on XAMPP (or any PHP-enabled web server) with native MSSQL connectivity.
 
-**Technical documentation (architecture, auth, data flow, modules):** [DOCUMENTATION.md](DOCUMENTATION.md)
+**Technical documentation (architecture, auth, data flow, modules):** [DOCUMENTATION.md](DOCUMENTATION.md)  
+
+**Business purpose, GO+ receiving context, and what each module does for users:** [PURPOSE_AND_FUNCTIONS.md](PURPOSE_AND_FUNCTIONS.md)
 
 ---
 
@@ -67,8 +69,9 @@ The sidebar and iframe embeds only expose modules the user is allowed to open. U
 ├── module7.php         # Week/Month calendar module
 ├── module8.php         # User Maintenance (accounts + TRIMS_TBL_USERACCESS)
 ├── assets/             # Static images (e.g. main workspace empty state)
-├── README.md           # Quick start & feature list
-├── DOCUMENTATION.md    # Architecture, security, module & DB reference
+├── README.md              # Quick start & feature list
+├── DOCUMENTATION.md      # Architecture, security, module & DB reference
+├── PURPOSE_AND_FUNCTIONS.md  # Business purpose, GO+ / raw data / inspection / reporting
 ├── sql/                # Optional SQL Server migration scripts (e.g. extra inspection columns)
 └── Library/
     ├── tcpdf.php       # TCPDF library (PDF generation)

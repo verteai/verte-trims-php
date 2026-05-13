@@ -1,6 +1,6 @@
 # TRIMS Inspection System — Technical Documentation
 
-This document describes architecture, data flow, security, and how the PHP modules fit together. For installation and a feature summary, see [README.md](README.md).
+This document describes architecture, data flow, security, and how the PHP modules fit together. For **business purpose, GO+ Actual receiving context, and end-to-end process**, see [PURPOSE_AND_FUNCTIONS.md](PURPOSE_AND_FUNCTIONS.md). For installation and a feature summary, see [README.md](README.md).
 
 ---
 
@@ -218,6 +218,7 @@ Trims/
 ├── module1.php … module8.php
 ├── README.md
 ├── DOCUMENTATION.md
+├── PURPOSE_AND_FUNCTIONS.md
 ├── assets/
 ├── sql/
 └── Library/          # TCPDF, FPDF, helpers (large third-party tree)
