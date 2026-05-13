@@ -29,10 +29,92 @@ if (isset($_GET['logout'])) {
     exit;
 }
 
+require_once dirname(__FILE__) . '/config.php';
 
-$module = isset($_GET['module']) ? (int)$_GET['module'] : 1;
-$validModules = array(1, 2, 3, 4, 5, 6, 7);
-if (!in_array($module, $validModules)) { $module = 1; }
+/**
+ * Modules the signed-in user may open (TRIMS_TBL_USERACCESS.access_code equals module number).
+ */
+function trimsMainLoadAllowedModules($username) {
+    $rows = dbQuery(
+        'SELECT access_code FROM TRIMS_TBL_USERACCESS WHERE username = ? ORDER BY access_code',
+        array($username)
+    );
+    $mods = array();
+    if (isset($rows['__error']) || !is_array($rows)) {
+        return $mods;
+    }
+    foreach ($rows as $r) {
+        if (!isset($r['access_code'])) {
+            continue;
+        }
+        $c = (int)$r['access_code'];
+        if ($c >= 1 && $c <= 8) {
+            $mods[$c] = 1;
+        }
+    }
+    $out = array_keys($mods);
+    sort($out, SORT_NUMERIC);
+    return $out;
+}
+
+function trimsMainFilterNavMap($map, $allowedFlip) {
+    $out = array();
+    foreach ($map as $num => $label) {
+        if (isset($allowedFlip[$num])) {
+            $out[$num] = $label;
+        }
+    }
+    return $out;
+}
+
+$validModules = array(1, 2, 3, 4, 5, 6, 7, 8);
+$requestedModule = isset($_GET['module']) ? (int)$_GET['module'] : 1;
+if (!in_array($requestedModule, $validModules)) {
+    $requestedModule = 1;
+}
+
+$allowedModules = trimsMainLoadAllowedModules($_SESSION['username']);
+$allowedFlip = array();
+foreach ($allowedModules as $am) {
+    $allowedFlip[$am] = 1;
+}
+
+$embed = isset($_GET['embed']) && $_GET['embed'] == '1';
+
+if ($embed) {
+    if (count($allowedModules) === 0 || !in_array($requestedModule, $allowedModules)) {
+        header('Content-Type: text/html; charset=UTF-8');
+        echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>TRIMS</title></head><body><p>You do not have access to this module.</p></body></html>';
+        exit;
+    }
+    $module = $requestedModule;
+} else {
+    if (count($allowedModules) === 0) {
+        $module = 0;
+    } elseif (!in_array($requestedModule, $allowedModules)) {
+        $module = $allowedModules[0];
+    } else {
+        $module = $requestedModule;
+    }
+}
+
+// Full HTML document modules (iframe embed must not wrap in main.php shell)
+$fullDocEmbedModules = array(3, 6, 7, 8);
+if ($embed && in_array($module, $fullDocEmbedModules, true)) {
+    $moduleFile = dirname(__FILE__) . '/module' . $module . '.php';
+    if (file_exists($moduleFile)) {
+        include $moduleFile;
+    } else {
+        header('Content-Type: text/html; charset=UTF-8');
+        echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>TRIMS</title></head><body><p>Module not found.</p></body></html>';
+    }
+    exit;
+}
+
+// Tie module-tab sessionStorage to this PHP session so logout/login does not restore old tabs.
+if (empty($_SESSION['trims_tab_sid'])) {
+    $_SESSION['trims_tab_sid'] = uniqid('tt', true);
+}
 
 $moduleNames = array(
     1 => 'Inspection',
@@ -50,7 +132,12 @@ $reportSubmenus = array(
 $fileSubmenus = array(
     6 => 'Dropdown Menu',
     7 => 'Week/Month',
+    8 => 'User Maintenance',
 );
+
+$navMainModules = trimsMainFilterNavMap($moduleNames, $allowedFlip);
+$navReportSubmenus = trimsMainFilterNavMap($reportSubmenus, $allowedFlip);
+$navFileSubmenus = trimsMainFilterNavMap($fileSubmenus, $allowedFlip);
 
 // All modules (for page header lookup)
 $allModuleNames = array(
@@ -61,6 +148,7 @@ $allModuleNames = array(
     5 => 'Performance Summary',
 	6 => 'Dropdown Menu',
 	7 => 'Week/Month',
+	8 => 'User Maintenance',
 
 );
 
@@ -148,6 +236,153 @@ $allModuleNames = array(
         .page-header { margin-bottom: 22px; padding-bottom: 14px; border-bottom: 2px solid #dde3ea; }
         .page-header h2 { font-size: 1.3rem; color: #1a3a5c; }
         .page-header p  { font-size: .85rem; color: #666; margin-top: 4px; }
+
+        /* ── Module tabs (multi-module workspace) ── */
+        .module-tab-strip {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -ms-flex-wrap: nowrap;
+            flex-wrap: nowrap;
+            gap: 4px;
+            overflow-x: auto;
+            margin: 0 0 18px 0;
+            padding: 0 2px 10px 0;
+            border-bottom: 2px solid #dde3ea;
+            -webkit-overflow-scrolling: touch;
+        }
+        .module-tab {
+            -webkit-box-flex: 0;
+            -ms-flex: 0 0 auto;
+            flex: 0 0 auto;
+            display: -webkit-inline-box;
+            display: -ms-inline-flexbox;
+            display: inline-flex;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            gap: 6px;
+            padding: 9px 12px;
+            max-width: 220px;
+            background: #e8ecf1;
+            border: 1px solid #c8d0da;
+            border-radius: 6px 6px 0 0;
+            font-size: .81rem;
+            color: #455a64;
+            cursor: pointer;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+        .module-tab:hover { background: #dfe6ee; }
+        .module-tab.active {
+            background: #fff;
+            border-color: #1a73e8;
+            border-bottom-color: #fff;
+            color: #1a3a5c;
+            font-weight: 600;
+            margin-bottom: -2px;
+            padding-bottom: 11px;
+            position: relative;
+            z-index: 1;
+        }
+        .module-tab-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .module-tab-close {
+            display: inline-block;
+            padding: 0 4px;
+            margin: 0 -2px 0 0;
+            font-size: 1.1rem;
+            line-height: 1;
+            opacity: .55;
+            color: inherit;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-weight: 400;
+        }
+        .module-tab-close:hover { opacity: 1; color: #c62828; }
+        .module-frame-host {
+            position: relative;
+            background: transparent;
+        }
+        .module-frame-host iframe {
+            display: none;
+            width: 100%;
+            min-height: calc(100vh - 220px);
+            border: none;
+            vertical-align: top;
+            background: #f0f2f5;
+        }
+        .module-frame-host iframe.active {
+            display: block;
+        }
+        .module-tab-strip:empty {
+            display: none;
+            margin: 0;
+            padding: 0;
+            border-bottom: none;
+        }
+        .module-empty-state {
+            display: none;
+            -webkit-box-orient: vertical;
+            -webkit-box-direction: normal;
+            -ms-flex-direction: column;
+            flex-direction: column;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            -webkit-box-pack: center;
+            -ms-flex-pack: center;
+            justify-content: center;
+            min-height: calc(100vh - 220px);
+            padding: 28px 20px 40px;
+            text-align: center;
+            background: #f0f2f5;
+        }
+        .main.module-idle .module-empty-state {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+        }
+        .main.module-idle .module-frame-host {
+            display: none !important;
+        }
+        .no-access-panel {
+            max-width: 520px;
+            margin: 0 auto;
+            padding: 28px 24px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(26, 58, 92, 0.12);
+            text-align: left;
+        }
+        .no-access-panel h3 { color: #1a3a5c; margin-bottom: 10px; font-size: 1.1rem; }
+        .no-access-panel p { color: #555; font-size: .9rem; line-height: 1.5; margin: 0; }
+
+        .module-empty-hero {
+            max-width: 1100px;
+            width: 100%;
+            height: auto;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(26, 58, 92, 0.12);
+            vertical-align: top;
+        }
+        body.embed-body {
+            background: #f0f2f5;
+            margin: 0;
+        }
+        .main.embed-only {
+            padding: 20px 24px 40px;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
 
         /* ── Cards ── */
         .card {
@@ -337,6 +572,10 @@ $allModuleNames = array(
                 padding: 16px 14px;
                 width: 100%;
             }
+            .module-tab-strip { margin-bottom: 12px; padding-bottom: 8px; }
+            .module-tab { max-width: 150px; font-size: .76rem; padding: 8px 8px; }
+            .module-frame-host iframe { min-height: calc(100vh - 160px); }
+            .module-empty-state { min-height: calc(100vh - 140px); padding: 16px 12px 28px; }
             .page-header { margin-bottom: 16px; padding-bottom: 10px; }
             .page-header h2 { font-size: 1.1rem; }
             .page-header p  { font-size: .78rem; }
@@ -865,7 +1104,22 @@ $allModuleNames = array(
         }
     </style>
 </head>
-<body>
+<body<?php echo $embed ? ' class="embed-body"' : ''; ?>>
+<?php if ($embed): ?>
+<main class="main embed-only">
+<?php
+$moduleFile = dirname(__FILE__) . '/module' . $module . '.php';
+if (file_exists($moduleFile)) {
+    include $moduleFile;
+} else {
+    echo '<div class="card"><div class="placeholder-box"><p>Module ' . (int)$module . ' is under construction.</p></div></div>';
+}
+?>
+</main>
+
+</body>
+</html>
+<?php exit; endif; ?>
 
 <!-- Top Bar -->
 <div class="topbar">
@@ -966,22 +1220,23 @@ $allModuleNames = array(
 
     <!-- Sidebar -->
     <nav class="sidebar" id="sidebar">
+        <?php if (count($navMainModules) > 0): ?>
         <div class="section-label">Main Modules</div>
+        <?php endif; ?>
 
         <?php
-        // Determine if active module is a report submenu item
-        $reportsActive = in_array($module, array_keys($reportSubmenus));
-		$fileActive = in_array($module, array_keys($fileSubmenus));
-        // Render main nav items
-        foreach ($moduleNames as $num => $name):
+        $reportsActive = ($module > 0 && in_array($module, array_keys($navReportSubmenus)));
+        $fileActive = ($module > 0 && in_array($module, array_keys($navFileSubmenus)));
+        foreach ($navMainModules as $num => $name):
             $activeClass = ($module === $num) ? 'active' : '';
         ?>
-        <a href="?module=<?php echo $num; ?>" class="<?php echo $activeClass; ?>">
+        <a href="?module=<?php echo $num; ?>" data-module="<?php echo (int)$num; ?>" class="<?php echo $activeClass; ?>">
             <span class="nav-badge"><?php echo $num; ?></span>
             <?php echo htmlspecialchars($name); ?>
         </a>
         <?php endforeach; ?>
 
+        <?php if (count($navReportSubmenus) > 0): ?>
         <!-- Reports group with submenu -->
         <span class="nav-group-label <?php echo $reportsActive ? 'open has-active' : ''; ?>"
               id="reportsGroupLabel"
@@ -991,17 +1246,18 @@ $allModuleNames = array(
             <span class="caret">&#9660;</span>
         </span>
         <div class="nav-submenu <?php echo $reportsActive ? 'open' : ''; ?>" id="reportsSubmenu">
-            <?php foreach ($reportSubmenus as $num => $name):
+            <?php foreach ($navReportSubmenus as $num => $name):
                 $activeClass = ($module === $num) ? 'active' : '';
             ?>
-            <a href="?module=<?php echo $num; ?>" class="<?php echo $activeClass; ?>">
+            <a href="?module=<?php echo $num; ?>" data-module="<?php echo (int)$num; ?>" class="<?php echo $activeClass; ?>">
                 <?php echo htmlspecialchars($name); ?>
             </a>
             <?php endforeach; ?>
         </div>
-		
-		
-		
+        <?php endif; ?>
+
+
+        <?php if (count($navFileSubmenus) > 0): ?>
 		<!-- File Maintenance group with submenu -->
         <span class="nav-group-label <?php echo $fileActive ? 'open has-active' : ''; ?>"
               id="fileGroupLabel"
@@ -1011,32 +1267,36 @@ $allModuleNames = array(
             <span class="caret">&#9660;</span>
         </span>
         <div class="nav-submenu <?php echo $fileActive ? 'open' : ''; ?>" id="fileSubmenu">
-            <?php foreach ($fileSubmenus as $num => $name):
+            <?php foreach ($navFileSubmenus as $num => $name):
                 $activeClass = ($module === $num) ? 'active' : '';
             ?>
-            <a href="?module=<?php echo $num; ?>" class="<?php echo $activeClass; ?>">
+            <a href="?module=<?php echo $num; ?>" data-module="<?php echo (int)$num; ?>" class="<?php echo $activeClass; ?>">
                 <?php echo htmlspecialchars($name); ?>
             </a>
             <?php endforeach; ?>
         </div>
+        <?php endif; ?>
 
     </nav>
 
-    <!-- Main Content -->
-    <main class="main">
-        <div class="page-header">
-            <h2><?php echo htmlspecialchars(isset($allModuleNames[$module]) ? $allModuleNames[$module] : 'Module ' . $module); ?></h2>
-            <p>TRIMS Inspection System &rsaquo; <?php echo htmlspecialchars(isset($allModuleNames[$module]) ? $allModuleNames[$module] : 'Module ' . $module); ?></p>
+    <!-- Main Content: tabbed module workspaces -->
+    <main class="main<?php echo (count($allowedModules) === 0) ? ' module-idle' : ''; ?>" id="mainWorkspace">
+        <div class="module-tab-strip" id="moduleTabStrip" role="tablist" aria-label="Open modules"></div>
+        <div class="module-frame-host" id="moduleFrameHost"></div>
+        <div class="module-empty-state" id="moduleEmptyState">
+            <?php if (count($allowedModules) === 0): ?>
+            <div class="no-access-panel">
+                <h3>No module access</h3>
+                <p>Your account is not assigned to any modules in User Maintenance. Contact an administrator to update your access in <strong>TRIMS_TBL_USERACCESS</strong>.</p>
+            </div>
+            <?php else: ?>
+            <img class="module-empty-hero"
+                 src="assets/trims-inspection-hero.png"
+                 width="1200"
+                 height="675"
+                 alt="TRIMS Inspection System — Quality Control &amp; Inspection Management">
+            <?php endif; ?>
         </div>
-
-        <?php
-        $moduleFile = dirname(__FILE__) . '/module' . $module . '.php';
-        if (file_exists($moduleFile)) {
-            include $moduleFile;
-        } else {
-            echo '<div class="card"><div class="placeholder-box"><p>Module ' . $module . ' is under construction.</p></div></div>';
-        }
-        ?>
     </main>
 </div>
 
@@ -1072,6 +1332,344 @@ function closeSidebar() {
             if (window.innerWidth <= 768) { closeSidebar(); }
         }, false);
     }
+})();
+
+/* Multi-module tabs (iframes preserve each module's state) */
+(function trimsModuleTabs() {
+    var STRIP_ID = 'moduleTabStrip';
+    var HOST_ID = 'moduleFrameHost';
+    var MAIN_ID = 'mainWorkspace';
+    var STORAGE_KEY = 'trims_module_tabs_v1';
+    var ModuleNames = <?php echo json_encode($allModuleNames); ?>;
+    var validMods = [1, 2, 3, 4, 5, 6, 7, 8];
+    var allowedMods = <?php echo json_encode(array_values($allowedModules)); ?>;
+    var initialMod = <?php echo (int)$module; ?>;
+    var tabSessionId = <?php echo json_encode(isset($_SESSION['trims_tab_sid']) ? $_SESSION['trims_tab_sid'] : ''); ?>;
+
+    function modTitle(m) {
+        var k = String(m);
+        return (ModuleNames && ModuleNames[k]) ? ModuleNames[k] : ('Module ' + m);
+    }
+
+    function saveState(order, active) {
+        try {
+            sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+                order: order || [],
+                active: active,
+                sid: tabSessionId
+            }));
+        } catch (e) { /* ignore */ }
+    }
+
+    function loadState() {
+        try {
+            var s = sessionStorage.getItem(STORAGE_KEY);
+            if (!s) { return null; }
+            var o = JSON.parse(s);
+            if (!o || Object.prototype.toString.call(o.order) !== '[object Array]') { return null; }
+            if (!tabSessionId || !o.sid || o.sid !== tabSessionId) { return null; }
+            return o;
+        } catch (e) { return null; }
+    }
+
+    function filterValidOrder(order) {
+        var out = [];
+        var seen = {};
+        for (var i = 0; i < order.length; i++) {
+            var m = parseInt(order[i], 10);
+            if (validMods.indexOf(m) === -1) { continue; }
+            if (allowedMods.indexOf(m) === -1) { continue; }
+            if (seen[m]) { continue; }
+            seen[m] = 1;
+            out.push(m);
+        }
+        return out;
+    }
+
+    var strip = document.getElementById(STRIP_ID);
+    var host = document.getElementById(HOST_ID);
+    var mainWorkspace = document.getElementById(MAIN_ID);
+    if (!strip || !host) { return; }
+
+    var tabOrder = [];
+    var activeMod = null;
+    var iframesByMod = {};
+
+    function setIdle(on) {
+        if (!mainWorkspace) { return; }
+        var c = mainWorkspace.className || '';
+        if (on) {
+            if (c.indexOf('module-idle') === -1) {
+                mainWorkspace.className = (c + ' module-idle').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+            }
+        } else {
+            mainWorkspace.className = c.replace(/\bmodule-idle\b/g, '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+        }
+    }
+
+    function setUrlForModule(mod) {
+        try {
+            var base = 'main.php';
+            var path = window.location.pathname || '';
+            var parts = path.split('/');
+            var last = parts[parts.length - 1] || '';
+            if (last && last.indexOf('.php') !== -1) { base = last.split('?')[0]; }
+            if (mod === null || typeof mod === 'undefined') {
+                history.replaceState(null, '', base);
+            } else {
+                history.replaceState(null, '', base + '?module=' + mod);
+            }
+        } catch (e2) { /* ignore */ }
+    }
+
+    function clearSidebarActive() {
+        var sb = document.getElementById('sidebar');
+        if (!sb) { return; }
+        var links = sb.getElementsByTagName('a');
+        var i;
+        for (i = 0; i < links.length; i++) {
+            var a = links[i];
+            if (!a.getAttribute('data-module')) { continue; }
+            var c = a.className || '';
+            a.className = c.replace(/\bactive\b/g, '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+        }
+        var rl = document.getElementById('reportsGroupLabel');
+        var fl = document.getElementById('fileGroupLabel');
+        if (rl) {
+            rl.className = (rl.className || '').replace(/\bhas-active\b/g, '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+        }
+        if (fl) {
+            fl.className = (fl.className || '').replace(/\bhas-active\b/g, '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+        }
+    }
+
+    function showEmptyState() {
+        setIdle(true);
+        activeMod = null;
+        clearSidebarActive();
+        setUrlForModule(null);
+        saveState([], null);
+    }
+
+    function syncSidebar(mod) {
+        var sb = document.getElementById('sidebar');
+        if (!sb) { return; }
+        var links = sb.getElementsByTagName('a');
+        var i;
+        for (i = 0; i < links.length; i++) {
+            var a = links[i];
+            var dm = a.getAttribute('data-module');
+            if (!dm) { continue; }
+            var c = a.className || '';
+            if (parseInt(dm, 10) === mod) {
+                if (c.indexOf('active') === -1) {
+                    a.className = (c + ' active').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+                }
+            } else {
+                a.className = c.replace(/\bactive\b/g, '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+            }
+        }
+        var reportMods = { 3: 1, 5: 1 };
+        var fileMods = { 6: 1, 7: 1, 8: 1 };
+        var rl = document.getElementById('reportsGroupLabel');
+        var fl = document.getElementById('fileGroupLabel');
+        if (rl) {
+            var ra = reportMods[mod];
+            var rlc = rl.className || '';
+            rlc = rlc.replace(/\bhas-active\b/g, '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+            if (ra) { rlc = (rlc + ' has-active').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, ''); }
+            rl.className = rlc;
+        }
+        if (fl) {
+            var fa = fileMods[mod];
+            var flc = fl.className || '';
+            flc = flc.replace(/\bhas-active\b/g, '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+            if (fa) { flc = (flc + ' has-active').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, ''); }
+            fl.className = flc;
+        }
+    }
+
+    function showFrame(mod) {
+        setIdle(false);
+        var ids = host.getElementsByTagName('iframe');
+        var i;
+        for (i = 0; i < ids.length; i++) {
+            var f = ids[i];
+            var mm = parseInt(f.getAttribute('data-module'), 10);
+            if (mm === mod) {
+                f.className = 'active';
+            } else {
+                f.className = '';
+            }
+        }
+        var tabs = strip.getElementsByClassName('module-tab');
+        for (i = 0; i < tabs.length; i++) {
+            var t = tabs[i];
+            var tm = parseInt(t.getAttribute('data-module'), 10);
+            if (tm === mod) {
+                t.className = 'module-tab active';
+            } else {
+                t.className = 'module-tab';
+            }
+        }
+        activeMod = mod;
+        syncSidebar(mod);
+        setUrlForModule(mod);
+        saveState(tabOrder, activeMod);
+    }
+
+    function removeTab(mod) {
+        var idx = tabOrder.indexOf(mod);
+        if (idx === -1) { return; }
+        tabOrder.splice(idx, 1);
+        var fr = iframesByMod[mod];
+        if (fr && fr.parentNode) { fr.parentNode.removeChild(fr); }
+        delete iframesByMod[mod];
+        var te = null;
+        var tabs = strip.getElementsByClassName('module-tab');
+        var i;
+        for (i = 0; i < tabs.length; i++) {
+            if (parseInt(tabs[i].getAttribute('data-module'), 10) === mod) {
+                te = tabs[i];
+                break;
+            }
+        }
+        if (te && te.parentNode) { te.parentNode.removeChild(te); }
+
+        if (tabOrder.length === 0) {
+            showEmptyState();
+            return;
+        }
+        var next = activeMod;
+        if (activeMod === mod) {
+            next = tabOrder[Math.max(0, idx - 1)] || tabOrder[0];
+        }
+        showFrame(next);
+    }
+
+    function addTab(mod, makeActive) {
+        if (tabOrder.indexOf(mod) !== -1) {
+            if (makeActive) { showFrame(mod); }
+            return;
+        }
+        setIdle(false);
+        tabOrder.push(mod);
+
+        var tab = document.createElement('div');
+        tab.className = 'module-tab' + (makeActive ? ' active' : '');
+        tab.setAttribute('data-module', mod);
+        tab.setAttribute('role', 'tab');
+        tab.title = modTitle(mod);
+
+        var lab = document.createElement('span');
+        lab.className = 'module-tab-label';
+        lab.appendChild(document.createTextNode(modTitle(mod)));
+        tab.appendChild(lab);
+
+        var cls = document.createElement('button');
+        cls.type = 'button';
+        cls.className = 'module-tab-close';
+        cls.innerHTML = '\u00D7';
+        cls.title = 'Close tab';
+        cls.setAttribute('aria-label', 'Close tab');
+        cls.onclick = function (e) {
+            if (e.stopPropagation) { e.stopPropagation(); }
+            removeTab(mod);
+        };
+        tab.appendChild(cls);
+
+        tab.onclick = function () { showFrame(mod); };
+        strip.appendChild(tab);
+
+        var iframe = document.createElement('iframe');
+        iframe.setAttribute('data-module', mod);
+        iframe.setAttribute('title', modTitle(mod));
+        iframe.src = 'main.php?embed=1&module=' + mod;
+        if (makeActive) {
+            iframe.className = 'active';
+        }
+        host.appendChild(iframe);
+        iframesByMod[mod] = iframe;
+
+        if (makeActive) {
+            showFrame(mod);
+        } else {
+            saveState(tabOrder, activeMod);
+        }
+    }
+
+    function openOrFocus(mod) {
+        if (validMods.indexOf(mod) === -1) { return; }
+        if (allowedMods.indexOf(mod) === -1) { return; }
+        if (tabOrder.indexOf(mod) !== -1) {
+            showFrame(mod);
+        } else {
+            addTab(mod, true);
+        }
+    }
+
+    var st = loadState();
+    var startOrder;
+    if (allowedMods.length === 0) {
+        startOrder = [];
+    } else if (st && Object.prototype.toString.call(st.order) === '[object Array]') {
+        if (st.order.length === 0) {
+            startOrder = [];
+        } else {
+            startOrder = filterValidOrder(st.order);
+            if (initialMod > 0 && startOrder.indexOf(initialMod) === -1 && allowedMods.indexOf(initialMod) !== -1) {
+                startOrder.push(initialMod);
+            }
+        }
+    } else {
+        startOrder = (initialMod > 0 && allowedMods.indexOf(initialMod) !== -1) ? [initialMod] : [allowedMods[0]];
+    }
+
+    if (allowedMods.length > 0 && startOrder.length === 0) {
+        startOrder = [allowedMods[0]];
+    }
+
+    tabOrder = [];
+    if (allowedMods.length === 0 || startOrder.length === 0) {
+        showEmptyState();
+    } else {
+        for (var si = 0; si < startOrder.length; si++) {
+            addTab(startOrder[si], false);
+        }
+        var focusMod = initialMod;
+        if (st && st.active !== null && typeof st.active !== 'undefined' && st.active !== '') {
+            var am = parseInt(st.active, 10);
+            if (!isNaN(am) && tabOrder.indexOf(am) !== -1) {
+                focusMod = am;
+            }
+        } else if (startOrder.length > 0) {
+            focusMod = startOrder[0];
+        }
+        showFrame(focusMod);
+    }
+
+    var sbel = document.getElementById('sidebar');
+    if (sbel) {
+        sbel.addEventListener('click', function (e) {
+            var t = e.target;
+            while (t && t !== sbel) {
+                if (t.tagName === 'A' && t.getAttribute('data-module')) {
+                    if (e.ctrlKey || e.metaKey || e.shiftKey) { return; }
+                    if (typeof e.button === 'number' && e.button !== 0) { return; }
+                    if (e.preventDefault) { e.preventDefault(); }
+                    var dm = parseInt(t.getAttribute('data-module'), 10);
+                    openOrFocus(dm);
+                    if (window.innerWidth <= 768 && typeof closeSidebar === 'function') {
+                        closeSidebar();
+                    }
+                    return;
+                }
+                t = t.parentNode;
+            }
+        }, false);
+    }
+
+    window.trimsOpenModuleTab = openOrFocus;
 })();
 
 function toggleReportsMenu() {
