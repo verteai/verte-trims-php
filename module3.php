@@ -495,6 +495,43 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'export_pdf') {
 <meta charset="UTF-8">
 <title>Module 3 – Reports</title>
 <style>
+/* Shell styles (needed when loaded via main.php?embed=1 — no main.php stylesheet) */
+* { -webkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: #f0f2f5;
+    color: #333;
+}
+.card {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.1);
+    padding: 20px 24px;
+    margin-bottom: 20px;
+}
+.card-title {
+    font-size: .95rem;
+    font-weight: 600;
+    color: #1a3a5c;
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #eef1f4;
+}
+.btn {
+    display: inline-block;
+    padding: 8px 18px;
+    border: none;
+    border-radius: 5px;
+    font-size: .88rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+}
+.btn-primary   { background: #1a73e8; color: #fff; }
+.btn-secondary { background: #607d8b; color: #fff; }
+.btn:hover     { opacity: .85; }
+
 .date-row { overflow:hidden; margin-bottom:14px; }
 .date-row label { font-size:.85rem; font-weight:600; color:#555; margin-right:5px; }
 .date-row input[type=date] {
